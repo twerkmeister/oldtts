@@ -13,20 +13,26 @@ from torch import optim
 from torch.utils.data import DataLoader
 from tensorboardX import SummaryWriter
 
+from dist import init_distributed, apply_gradient_allreduce, reduce_tensor
+from torch.utils.data.distributed import DistributedSampler
+
 from utils.generic_utils import (
     remove_experiment_folder, create_experiment_folder, save_checkpoint,
     save_best_model, load_config, lr_decay, count_parameters, check_update,
-    get_commit_hash, sequence_mask, AnnealLR)
+    get_commit_hash, sequence_mask, AnnealLR, weight_decay)
 from utils.visual import plot_alignment, plot_spectrogram
 from models.tacotron import Tacotron
 from layers.losses import L1LossMasked
 from utils.audio import AudioProcessor
 from utils.synthesis import synthesis
 
+torch.backends.cudnn.enabled = True
+torch.backends.cudnn.benchmark = False
 torch.manual_seed(1)
 use_cuda = torch.cuda.is_available()
+num_gpus = torch.cuda.device_count()
 print(" > Using CUDA: ", use_cuda)
-print(" > Number of GPUs: ", torch.cuda.device_count())
+print(" > Number of GPUs: ", num_gpus)
 
 
 def train(model, criterion, criterion_st, data_loader, optimizer, optimizer_st,
@@ -79,12 +85,8 @@ def train(model, criterion, criterion_st, data_loader, optimizer, optimizer_st,
         mask = sequence_mask(text_lengths)
 
         # forward pass
-        if use_cuda:
-            mel_output, linear_output, alignments, stop_tokens = torch.nn.parallel.data_parallel(
-                model, (text_input, mel_input, mask))
-        else:
-            mel_output, linear_output, alignments, stop_tokens = model(
-                text_input, mel_input, mask)
+        mel_output, linear_output, alignments, stop_tokens = model(
+            text_input, mel_input, mask)
 
         # loss computation
         stop_loss = criterion_st(stop_tokens, stop_targets)
@@ -97,34 +99,21 @@ def train(model, criterion, criterion_st, data_loader, optimizer, optimizer_st,
 
         # backpass and check the grad norm for spec losses
         loss.backward(retain_graph=True)
-        # custom weight decay
-        for group in optimizer.param_groups:
-            for param in group['params']:
-                current_lr = group['lr']
-                param.data = param.data.add(-c.wd * group['lr'], param.data)
-        grad_norm, skip_flag = check_update(model, 1)
-        if skip_flag:
-            optimizer.zero_grad()
-            print("   | > Iteration skipped!!", flush=True)
-            continue
+        optimizer, current_lr = weight_decay(optimizer, c.wd)
+        grad_norm, _ = check_update(model, 1)
         optimizer.step()
 
         # backpass and check the grad norm for stop loss
         stop_loss.backward()
         # custom weight decay
-        for group in optimizer_st.param_groups:
-            for param in group['params']:
-                param.data = param.data.add(-c.wd * group['lr'], param.data)
-        grad_norm_st, skip_flag = check_update(model.decoder.stopnet, 0.5)
-        if skip_flag:
-            optimizer_st.zero_grad()
-            print("   | > Iteration skipped fro stopnet!!")
-            continue
+        optimizer_st, _ = weight_decay(optimizer_st, c.wd)
+        grad_norm_st, _ = check_update(model.decoder.stopnet, 0.5)
         optimizer_st.step()
 
         step_time = time.time() - start_time
         epoch_time += step_time
 
+        # logging
         if current_step % c.print_step == 0:
             print(
                 "   | > Step:{}/{}  GlobalStep:{}  TotalLoss:{:.5f}  LinearLoss:{:.5f}  "
@@ -135,54 +124,64 @@ def train(model, criterion, criterion_st, data_loader, optimizer, optimizer_st,
                     grad_norm, grad_norm_st, step_time, current_lr),
                 flush=True)
 
+        # aggregate losses from processes
+        if num_gpus > 1:
+            linear_loss = reduce_tensor(linear_loss.data, num_gpus)
+            mel_loss = reduce_tensor(mel_loss.data, num_gpus)
+            loss = reduce_tensor(loss.data, num_gpus)
+            stop_loss = reduce_tensor(stop_loss.data, num_gpus)
+
         avg_linear_loss += linear_loss.item()
         avg_mel_loss += mel_loss.item()
         avg_stop_loss += stop_loss.item()
         avg_step_time += step_time
 
-        # Plot Training Iter Stats
-        tb.add_scalar('TrainIterLoss/TotalLoss', loss.item(), current_step)
-        tb.add_scalar('TrainIterLoss/LinearLoss', linear_loss.item(),
-                      current_step)
-        tb.add_scalar('TrainIterLoss/MelLoss', mel_loss.item(), current_step)
-        tb.add_scalar('Params/LearningRate', optimizer.param_groups[0]['lr'],
-                      current_step)
-        tb.add_scalar('Params/GradNorm', grad_norm, current_step)
-        tb.add_scalar('Params/GradNormSt', grad_norm_st, current_step)
-        tb.add_scalar('Time/StepTime', step_time, current_step)
+        if args.rank == 0:
+            # Plot iter stats
+            tb.add_scalar('TrainIterLoss/TotalLoss', loss.item(), current_step)
+            tb.add_scalar('TrainIterLoss/LinearLoss', linear_loss.item(),
+                          current_step)
+            tb.add_scalar('TrainIterLoss/MelLoss', mel_loss.item(),
+                          current_step)
+            tb.add_scalar('Params/LearningRate',
+                          optimizer.param_groups[0]['lr'], current_step)
+            tb.add_scalar('Params/GradNorm', grad_norm, current_step)
+            tb.add_scalar('Params/GradNormSt', grad_norm_st, current_step)
+            tb.add_scalar('Time/StepTime', step_time, current_step)
 
-        if current_step % c.save_step == 0:
-            if c.checkpoint:
-                # save model
-                save_checkpoint(model, optimizer, optimizer_st,
-                                linear_loss.item(), OUT_PATH, current_step,
-                                epoch)
+            if current_step % c.save_step == 0 and args.rank == 0:
+                if c.checkpoint:
+                    # save model
+                    save_checkpoint(model, optimizer, optimizer_st,
+                                    linear_loss.item(), OUT_PATH, current_step,
+                                    epoch)
 
-            # Diagnostic visualizations
-            const_spec = linear_output[0].data.cpu().numpy()
-            gt_spec = linear_input[0].data.cpu().numpy()
+                # Diagnostic visualization
+                const_spec = linear_output[0].data.cpu().numpy()
+                gt_spec = linear_input[0].data.cpu().numpy()
 
-            const_spec = plot_spectrogram(const_spec, ap)
-            gt_spec = plot_spectrogram(gt_spec, ap)
-            tb.add_figure('Visual/Reconstruction', const_spec, current_step)
-            tb.add_figure('Visual/GroundTruth', gt_spec, current_step)
+                const_spec = plot_spectrogram(const_spec, ap)
+                gt_spec = plot_spectrogram(gt_spec, ap)
+                tb.add_figure('Visual/Reconstruction', const_spec,
+                              current_step)
+                tb.add_figure('Visual/GroundTruth', gt_spec, current_step)
 
-            align_img = alignments[0].data.cpu().numpy()
-            align_img = plot_alignment(align_img)
-            tb.add_figure('Visual/Alignment', align_img, current_step)
+                align_img = alignments[0].data.cpu().numpy()
+                align_img = plot_alignment(align_img)
+                tb.add_figure('Visual/Alignment', align_img, current_step)
 
-            # Sample audio
-            audio_signal = linear_output[0].data.cpu().numpy()
-            ap.griffin_lim_iters = 60
-            audio_signal = ap.inv_spectrogram(audio_signal.T)
-            try:
-                tb.add_audio(
-                    'SampleAudio',
-                    audio_signal,
-                    current_step,
-                    sample_rate=c.sample_rate)
-            except:
-                pass
+                # Synthesis audio
+                audio_signal = linear_output[0].data.cpu().numpy()
+                ap.griffin_lim_iters = 60
+                audio_signal = ap.inv_spectrogram(audio_signal.T)
+                try:
+                    tb.add_audio(
+                        'SampleAudio',
+                        audio_signal,
+                        current_step,
+                        sample_rate=c.sample_rate)
+                except:
+                    pass
 
     avg_linear_loss /= (num_iter + 1)
     avg_mel_loss /= (num_iter + 1)
@@ -200,13 +199,15 @@ def train(model, criterion, criterion_st, data_loader, optimizer, optimizer_st,
                                     avg_stop_loss, epoch_time, avg_step_time),
         flush=True)
 
-    # Plot Training Epoch Stats
-    tb.add_scalar('TrainEpochLoss/TotalLoss', avg_total_loss, current_step)
-    tb.add_scalar('TrainEpochLoss/LinearLoss', avg_linear_loss, current_step)
-    tb.add_scalar('TrainEpochLoss/MelLoss', avg_mel_loss, current_step)
-    tb.add_scalar('TrainEpochLoss/StopLoss', avg_stop_loss, current_step)
-    tb.add_scalar('Time/EpochTime', epoch_time, epoch)
-    epoch_time = 0
+    # Plot Epoch Stats
+    if args.rank == 0:
+        tb.add_scalar('TrainEpochLoss/TotalLoss', avg_total_loss, current_step)
+        tb.add_scalar('TrainEpochLoss/LinearLoss', avg_linear_loss,
+                      current_step)
+        tb.add_scalar('TrainEpochLoss/MelLoss', avg_mel_loss, current_step)
+        tb.add_scalar('TrainEpochLoss/StopLoss', avg_stop_loss, current_step)
+        tb.add_scalar('Time/EpochTime', epoch_time, epoch)
+        epoch_time = 0
     return avg_linear_loss, current_step
 
 
@@ -357,6 +358,10 @@ def evaluate(model, criterion, criterion_st, data_loader, ap, current_step):
 
 
 def main(args):
+    # DISTRUBUTED
+    if num_gpus > 1:
+        init_distributed(args.rank, num_gpus, args.group_id)
+
     # Conditional imports
     preprocessor = importlib.import_module('datasets.preprocess')
     preprocessor = getattr(preprocessor, c.dataset.lower())
@@ -379,16 +384,20 @@ def main(args):
         batch_group_size=8 * c.batch_size,
         min_seq_len=c.min_seq_len)
 
+    # DISTRUBUTED
+    sampler = DistributedSampler(train_dataset) if num_gpus > 1 else None
+
     train_loader = DataLoader(
         train_dataset,
         batch_size=c.batch_size,
         shuffle=False,
         collate_fn=train_dataset.collate_fn,
         drop_last=False,
+        sampler=sampler,
         num_workers=c.num_loader_workers,
         pin_memory=True)
 
-    if c.run_eval:
+    if c.run_eval and args.rank == 0:
         val_dataset = MyDataset(
             c.data_path,
             c.meta_file_val,
@@ -419,7 +428,7 @@ def main(args):
     criterion = L1LossMasked()
     criterion_st = nn.BCELoss()
 
-    if args.restore_path:
+    if len(args.restore_path) > 1:
         checkpoint = torch.load(args.restore_path)
         model.load_state_dict(checkpoint['model'])
         if use_cuda:
@@ -448,6 +457,10 @@ def main(args):
     else:
         scheduler = None
 
+    # DISTRUBUTED
+    if num_gpus > 1:
+        model = apply_gradient_allreduce(model)
+
     num_params = count_parameters(model)
     print(" | > Model has {} parameters".format(num_params), flush=True)
 
@@ -461,8 +474,11 @@ def main(args):
         train_loss, current_step = train(model, criterion, criterion_st,
                                          train_loader, optimizer, optimizer_st,
                                          scheduler, ap, epoch)
-        val_loss = evaluate(model, criterion, criterion_st, val_loader, ap,
-                            current_step)
+        if args.rank == 0:
+            val_loss = evaluate(model, criterion, criterion_st, val_loader, ap,
+                                current_step)
+        else:
+            val_loss = 0
         print(
             " | > Train Loss: {:.5f}   Validation Loss: {:.5f}".format(
                 train_loss, val_loss),
@@ -479,7 +495,7 @@ if __name__ == '__main__':
         '--restore_path',
         type=str,
         help='Folder path to checkpoints',
-        default=0)
+        default='')
     parser.add_argument(
         '--config_path',
         type=str,
@@ -492,24 +508,38 @@ if __name__ == '__main__':
         help='do not ask for git has before run.')
     parser.add_argument(
         '--data_path', type=str, help='dataset path.', default='')
+
+    # DISTRUBUTED
+    parser.add_argument(
+        '--rank',
+        type=int,
+        default=0,
+        help='DISTRIBUTED: process rank for distributed training.')
+    parser.add_argument(
+        '--group_id',
+        type=str,
+        default="",
+        help='DISTRIBUTED: process group id.')
     args = parser.parse_args()
 
     # setup output paths and read configs
     c = load_config(args.config_path)
     _ = os.path.dirname(os.path.realpath(__file__))
     OUT_PATH = os.path.join(_, c.output_path)
-    OUT_PATH = create_experiment_folder(OUT_PATH, c.model_name, args.debug)
     CHECKPOINT_PATH = os.path.join(OUT_PATH, 'checkpoints')
     AUDIO_PATH = os.path.join(OUT_PATH, 'test_audios')
-    os.makedirs(AUDIO_PATH, exist_ok=True)
-    shutil.copyfile(args.config_path, os.path.join(OUT_PATH, 'config.json'))
+
+    if args.rank == 0:
+        OUT_PATH = create_experiment_folder(OUT_PATH, c.model_name, args.debug)
+        os.makedirs(AUDIO_PATH, exist_ok=True)
+        shutil.copyfile(args.config_path, os.path.join(OUT_PATH,
+                                                       'config.json'))
+        # setup tensorboard
+        LOG_DIR = OUT_PATH
+        tb = SummaryWriter(LOG_DIR)
 
     if args.data_path != '':
         c.data_path = args.data_path
-
-    # setup tensorboard
-    LOG_DIR = OUT_PATH
-    tb = SummaryWriter(LOG_DIR)
 
     try:
         main(args)

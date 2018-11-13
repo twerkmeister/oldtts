@@ -162,8 +162,15 @@ class AnnealLR(torch.optim.lr_scheduler._LRScheduler):
         ]
 
 
-def mk_decay(init_mk, max_epoch, n_epoch):
-    return init_mk * ((max_epoch - n_epoch) / max_epoch)
+def weight_decay(optimizer, wd):
+    """
+    Custom weight decay operation, not effecting grad values.
+    """
+    for group in optimizer.param_groups:
+        for param in group['params']:
+            current_lr = group['lr']
+            param.data = param.data.add(-wd * group['lr'], param.data)
+    return optimizer, current_lr
 
 
 def count_parameters(model):

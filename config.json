@@ -1,6 +1,6 @@
 {
-    "model_name": "TTS-master",
-    "model_description": "Higher dropout rate for stopnet and disabled custom initialization, pull current mel prediction to stopnet.",
+    "model_name": "TTS-dist",
+    "model_description": "Distributed training.",
 
     "audio":{
         "audio_processor": "audio",     // to use dictate different audio processors, if available.
@@ -34,7 +34,7 @@
 
     "batch_size": 32,
     "eval_batch_size":32,
-    "r": 5,
+    "r": 1,
     "wd": 0.000001,
     "checkpoint": true,
     "save_step": 5000,
