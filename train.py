@@ -13,7 +13,7 @@ from torch import optim
 from torch.utils.data import DataLoader
 from tensorboardX import SummaryWriter
 
-from dist import init_distributed, apply_gradient_allreduce, reduce_tensor
+from dist import init_distributed, register_gradient_reduce, reduce_tensor
 from torch.utils.data.distributed import DistributedSampler
 
 from utils.generic_utils import (
@@ -46,7 +46,7 @@ def train(model, criterion, criterion_st, data_loader, optimizer, optimizer_st,
     print(" | > Epoch {}/{}".format(epoch, c.epochs), flush=True)
     n_priority_freq = int(
         3000 / (c.audio['sample_rate'] * 0.5) * c.audio['num_freq'])
-    batch_n_iter = int(len(data_loader.dataset) / c.batch_size)
+    batch_n_iter = int(len(data_loader.dataset) / (c.batch_size * num_gpus))
     for num_iter, data in enumerate(data_loader):
         start_time = time.time()
 
@@ -395,7 +395,7 @@ def main(args):
         drop_last=False,
         sampler=sampler,
         num_workers=c.num_loader_workers,
-        pin_memory=True)
+        pin_memory=False)
 
     if c.run_eval and args.rank == 0:
         val_dataset = MyDataset(
@@ -414,7 +414,7 @@ def main(args):
             collate_fn=val_dataset.collate_fn,
             drop_last=False,
             num_workers=4,
-            pin_memory=True)
+            pin_memory=False)
     else:
         val_loader = None
 
@@ -459,13 +459,10 @@ def main(args):
 
     # DISTRUBUTED
     if num_gpus > 1:
-        model = apply_gradient_allreduce(model)
+        model = register_gradient_reduce(model)
 
     num_params = count_parameters(model)
     print(" | > Model has {} parameters".format(num_params), flush=True)
-
-    if not os.path.exists(CHECKPOINT_PATH):
-        os.mkdir(CHECKPOINT_PATH)
 
     if 'best_loss' not in locals():
         best_loss = float('inf')
@@ -508,6 +505,11 @@ if __name__ == '__main__':
         help='do not ask for git has before run.')
     parser.add_argument(
         '--data_path', type=str, help='dataset path.', default='')
+    parser.add_argument(
+        '--output_path',
+        type=str,
+        help='path for training outputs.',
+        default='')
 
     # DISTRUBUTED
     parser.add_argument(
@@ -525,12 +527,21 @@ if __name__ == '__main__':
     # setup output paths and read configs
     c = load_config(args.config_path)
     _ = os.path.dirname(os.path.realpath(__file__))
-    OUT_PATH = os.path.join(_, c.output_path)
-    CHECKPOINT_PATH = os.path.join(OUT_PATH, 'checkpoints')
+
+    if args.data_path != '':
+        c.data_path = args.data_path
+
+    if args.output_path == '':
+        OUT_PATH = os.path.join(_, c.output_path)
+    else:
+        OUT_PATH = args.output_path
+
+    if args.group_id == '':
+        OUT_PATH = create_experiment_folder(OUT_PATH, c.model_name, args.debug)
+    
     AUDIO_PATH = os.path.join(OUT_PATH, 'test_audios')
 
     if args.rank == 0:
-        OUT_PATH = create_experiment_folder(OUT_PATH, c.model_name, args.debug)
         os.makedirs(AUDIO_PATH, exist_ok=True)
         shutil.copyfile(args.config_path, os.path.join(OUT_PATH,
                                                        'config.json'))
@@ -538,8 +549,7 @@ if __name__ == '__main__':
         LOG_DIR = OUT_PATH
         tb = SummaryWriter(LOG_DIR)
 
-    if args.data_path != '':
-        c.data_path = args.data_path
+   
 
     try:
         main(args)

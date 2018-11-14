@@ -32,8 +32,8 @@
     "lr_decay": false,
     "warmup_steps": 4000,
 
-    "batch_size": 32,
-    "eval_batch_size":32,
+    "batch_size": 8,
+    "eval_batch_size":4,
     "r": 1,
     "wd": 0.000001,
     "checkpoint": true,
@@ -48,5 +48,5 @@
     "dataset": "ljspeech",     // one of TTS.dataset.preprocessors, only valid id dataloader == "TTSDataset", rest uses "tts_cache" by default.
     "min_seq_len": 0,
     "output_path": "../keep/",
-    "num_loader_workers": 8
+    "num_loader_workers": 4
 }
