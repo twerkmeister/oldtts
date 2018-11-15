@@ -1,4 +1,11 @@
 #!/bin/bash
 virtualenv -p python3 ../tmp/venv
 source ../tmp/venv/bin/activate
-python setup.py develop
+pip install torch torchvision
+pip install numpy -I
+pip install scipy
+pip install librosa
+pip install tensorboardX
+pip install matplotlib
+pip install unidecode
+# python setup.py develop

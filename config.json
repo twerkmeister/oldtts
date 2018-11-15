@@ -32,8 +32,8 @@
     "lr_decay": false,
     "warmup_steps": 4000,
 
-    "batch_size": 8,
-    "eval_batch_size":4,
+    "batch_size": 10,
+    "eval_batch_size":10,
     "r": 1,
     "wd": 0.000001,
     "checkpoint": true,

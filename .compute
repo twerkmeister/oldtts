@@ -4,3 +4,6 @@ source ../tmp/venv/bin/activate
 # python train.py --config_path config.json --data_path ~/tts_cache/ --debug true
 # python train.py --config_path config.json --data_path ${DATA_ROOT}/shared/data/keithito/LJSpeech-1.1/ --debug true
 python dist.py --config_path config.json --data_path ${DATA_ROOT}/shared/data/keithito/LJSpeech-1.1/
+# python -m http.server 54322 & 
+# sleep 1
+# curl --noproxy "*" http://localhost:54322

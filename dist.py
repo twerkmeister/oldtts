@@ -25,9 +25,8 @@ def init_distributed(rank, num_gpus, group_name):
     torch.cuda.set_device(rank)
     self_path = os.path.dirname(os.path.realpath(__file__))
     dist.init_process_group(
-        "nccl",
+        "gloo",
         init_method="tcp://localhost:54321",
-        # init_method="file://"+self_path+"/distributed",
         world_size=num_gpus,
         rank=rank,
         group_name=group_name)
