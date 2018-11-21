@@ -330,7 +330,7 @@ def evaluate(model, criterion, criterion_st, data_loader, ap, current_step):
     ap.griffin_lim_iters = 60
     for idx, test_sentence in enumerate(test_sentences):
         try:
-            wav, alignment, linear_spec, stop_tokens = synthesis(
+            wav, alignment, linear_spec, _, stop_tokens = synthesis(
                 model, test_sentence, c, use_cuda, ap)
 
             file_path = os.path.join(AUDIO_PATH, str(current_step))
@@ -353,6 +353,7 @@ def evaluate(model, criterion, criterion_st, data_loader, ap, current_step):
                           current_step)
         except:
             print(" !! Error as creating Test Sentence -", idx)
+            traceback.print_exc()
             pass
     return avg_linear_loss
 
