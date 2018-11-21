@@ -24,6 +24,11 @@
         "mel_fmax": null        // maximum freq level for mel-spec. Tune for dataset!!
     },
 
+    "distributed":{
+        "backend": "gloo",
+        "url": "tcp:\/\/localhost:54321"
+    },
+
     "embedding_size": 256,    
     "text_cleaner": "english_cleaners",
     "epochs": 1000,

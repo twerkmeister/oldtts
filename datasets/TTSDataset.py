@@ -24,6 +24,7 @@ class MyDataset(Dataset):
         self.root_path = root_path
         self.batch_group_size = batch_group_size
         self.items = preprocessor(root_path, meta_file)
+        self.items = self.items[:128]
         self.outputs_per_step = outputs_per_step
         self.sample_rate = ap.sample_rate
         self.cleaners = text_cleaner
@@ -131,8 +132,8 @@ class MyDataset(Dataset):
             # convert things to pytorch
             text_lenghts = torch.LongTensor(text_lenghts)
             text = torch.LongTensor(text)
-            linear = torch.FloatTensor(linear)
-            mel = torch.FloatTensor(mel)
+            linear = torch.FloatTensor(linear).contiguous()
+            mel = torch.FloatTensor(mel).contiguous()
             mel_lengths = torch.LongTensor(mel_lengths)
             stop_targets = torch.FloatTensor(stop_targets)
 

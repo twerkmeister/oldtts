@@ -13,7 +13,7 @@ from torch import optim
 from torch.utils.data import DataLoader
 from tensorboardX import SummaryWriter
 
-from dist import init_distributed, register_gradient_reduce, reduce_tensor
+from dist import init_distributed, apply_gradient_allreduce, reduce_tensor
 from torch.utils.data.distributed import DistributedSampler
 
 from utils.generic_utils import (
@@ -48,6 +48,7 @@ def train(model, criterion, criterion_st, data_loader, optimizer, optimizer_st,
         3000 / (c.audio['sample_rate'] * 0.5) * c.audio['num_freq'])
     batch_n_iter = int(len(data_loader.dataset) / (c.batch_size * num_gpus))
     for num_iter, data in enumerate(data_loader):
+        model.zero_grad()
         start_time = time.time()
 
         # setup input data
@@ -69,8 +70,6 @@ def train(model, criterion, criterion_st, data_loader, optimizer, optimizer_st,
         # setup lr
         if c.lr_decay:
             scheduler.step()
-        optimizer.zero_grad()
-        optimizer_st.zero_grad()
 
         # dispatch data to GPU
         if use_cuda:
@@ -361,7 +360,7 @@ def evaluate(model, criterion, criterion_st, data_loader, ap, current_step):
 def main(args):
     # DISTRUBUTED
     if num_gpus > 1:
-        init_distributed(args.rank, num_gpus, args.group_id)
+        init_distributed(args.rank, num_gpus, args.group_id, c.distributed["backend"], c.distributed["url"])
 
     # Conditional imports
     preprocessor = importlib.import_module('datasets.preprocess')
@@ -422,6 +421,10 @@ def main(args):
     model = Tacotron(c.embedding_size, ap.num_freq, ap.num_mels, c.r)
     print(" | > Num output units : {}".format(ap.num_freq), flush=True)
 
+     # DISTRUBUTED
+    if num_gpus > 1:
+        model = apply_gradient_allreduce(model)
+
     optimizer = optim.Adam(model.parameters(), lr=c.lr, weight_decay=0)
     optimizer_st = optim.Adam(
         model.decoder.stopnet.parameters(), lr=c.lr, weight_decay=0)
@@ -457,10 +460,6 @@ def main(args):
             last_epoch=args.restore_step - 1)
     else:
         scheduler = None
-
-    # DISTRUBUTED
-    if num_gpus > 1:
-        model = register_gradient_reduce(model)
 
     num_params = count_parameters(model)
     print(" | > Model has {} parameters".format(num_params), flush=True)
@@ -546,7 +545,8 @@ if __name__ == '__main__':
         os.makedirs(AUDIO_PATH, exist_ok=True)
         shutil.copyfile(args.config_path, os.path.join(OUT_PATH,
                                                        'config.json'))
-        # setup tensorboard
+        os.chmod(AUDIO_PATH, 0o775)
+        os.chmod(OUT_PATH, 0o775)
         LOG_DIR = OUT_PATH
         tb = SummaryWriter(LOG_DIR)
 
