@@ -1,3 +1,3 @@
 #!/bin/bash
 source ../tmp/venv/bin/activate
-python dist.py --config_path config.json --data_path ${DATA_ROOT}/shared/data/keithito/LJSpeech-1.1/
+PYTHONWARNING="ignore" python dist.py --config_path config.json --data_path ${DATA_ROOT}/shared/data/keithito/LJSpeech-1.1/

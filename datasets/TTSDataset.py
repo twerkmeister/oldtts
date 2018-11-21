@@ -24,7 +24,6 @@ class MyDataset(Dataset):
         self.root_path = root_path
         self.batch_group_size = batch_group_size
         self.items = preprocessor(root_path, meta_file)
-        self.items = self.items[:128]
         self.outputs_per_step = outputs_per_step
         self.sample_rate = ap.sample_rate
         self.cleaners = text_cleaner

@@ -471,11 +471,9 @@ def main(args):
         train_loss, current_step = train(model, criterion, criterion_st,
                                          train_loader, optimizer, optimizer_st,
                                          scheduler, ap, epoch)
-        if args.rank == 0:
-            val_loss = evaluate(model, criterion, criterion_st, val_loader, ap,
-                                current_step)
-        else:
-            val_loss = 0
+        val_loss = evaluate(model, criterion, criterion_st, val_loader, ap,
+                            current_step)
+        val_loss = 0
         print(
             " | > Train Loss: {:.5f}   Validation Loss: {:.5f}".format(
                 train_loss, val_loss),
