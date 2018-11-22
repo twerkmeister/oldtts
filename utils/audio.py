@@ -226,6 +226,7 @@ class AudioProcessor(object):
     def load_wav(self, filename, encode=False):
         x, sr = librosa.load(filename, sr=self.sample_rate)
         # sr, x = io.wavfile.read(filename)
+        # x_norm = x / 32767
         assert self.sample_rate == sr
         return x
 

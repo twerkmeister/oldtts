@@ -13,7 +13,7 @@ from torch import optim
 from torch.utils.data import DataLoader
 from tensorboardX import SummaryWriter
 
-from dist import init_distributed, apply_gradient_allreduce, reduce_tensor
+from distribute import init_distributed, apply_gradient_allreduce, reduce_tensor
 from torch.utils.data.distributed import DistributedSampler
 
 from utils.generic_utils import (
@@ -73,12 +73,12 @@ def train(model, criterion, criterion_st, data_loader, optimizer, optimizer_st,
 
         # dispatch data to GPU
         if use_cuda:
-            text_input = text_input.cuda()
-            text_lengths = text_lengths.cuda()
-            mel_input = mel_input.cuda()
-            mel_lengths = mel_lengths.cuda()
-            linear_input = linear_input.cuda()
-            stop_targets = stop_targets.cuda()
+            text_input = text_input.cuda(non_blocking=True)
+            text_lengths = text_lengths.cuda(non_blocking=True)
+            mel_input = mel_input.cuda(non_blocking=True)
+            mel_lengths = mel_lengths.cuda(non_blocking=True)
+            linear_input = linear_input.cuda(non_blocking=True)
+            stop_targets = stop_targets.cuda(non_blocking=True)
 
         # compute mask for padding
         mask = sequence_mask(text_lengths)
@@ -246,11 +246,11 @@ def evaluate(model, criterion, criterion_st, data_loader, ap, current_step):
 
                 # dispatch data to GPU
                 if use_cuda:
-                    text_input = text_input.cuda()
-                    mel_input = mel_input.cuda()
-                    mel_lengths = mel_lengths.cuda()
-                    linear_input = linear_input.cuda()
-                    stop_targets = stop_targets.cuda()
+                    text_input = text_input.cuda(non_blocking=True)
+                    mel_input = mel_input.cuda(non_blocking=True)
+                    mel_lengths = mel_lengths.cuda(non_blocking=True)
+                    linear_input = linear_input.cuda(non_blocking=True)
+                    stop_targets = stop_targets.cuda(non_blocking=True)
 
                 # forward pass
                 mel_output, linear_output, alignments, stop_tokens =\
@@ -326,34 +326,35 @@ def evaluate(model, criterion, criterion_st, data_loader, ap, current_step):
                           current_step)
 
     # test sentences
-    ap.griffin_lim_iters = 60
-    for idx, test_sentence in enumerate(test_sentences):
-        try:
-            wav, alignment, linear_spec, _, stop_tokens = synthesis(
-                model, test_sentence, c, use_cuda, ap)
+    if c.run_test_synthesis:
+        ap.griffin_lim_iters = 60
+        for idx, test_sentence in enumerate(test_sentences):
+            try:
+                wav, alignment, linear_spec, _, stop_tokens = synthesis(
+                    model, test_sentence, c, use_cuda, ap)
 
-            file_path = os.path.join(AUDIO_PATH, str(current_step))
-            os.makedirs(file_path, exist_ok=True)
-            file_path = os.path.join(file_path,
-                                     "TestSentence_{}.wav".format(idx))
-            ap.save_wav(wav, file_path)
+                file_path = os.path.join(AUDIO_PATH, str(current_step))
+                os.makedirs(file_path, exist_ok=True)
+                file_path = os.path.join(file_path,
+                                        "TestSentence_{}.wav".format(idx))
+                ap.save_wav(wav, file_path)
 
-            wav_name = 'TestSentences/{}'.format(idx)
-            tb.add_audio(
-                wav_name,
-                wav,
-                current_step,
-                sample_rate=c.audio['sample_rate'])
-            linear_spec = plot_spectrogram(linear_spec, ap)
-            align_img = plot_alignment(alignment)
-            tb.add_figure('TestSentences/{}_Spectrogram'.format(idx),
-                          linear_spec, current_step)
-            tb.add_figure('TestSentences/{}_Alignment'.format(idx), align_img,
-                          current_step)
-        except:
-            print(" !! Error as creating Test Sentence -", idx)
-            traceback.print_exc()
-            pass
+                wav_name = 'TestSentences/{}'.format(idx)
+                tb.add_audio(
+                    wav_name,
+                    wav,
+                    current_step,
+                    sample_rate=c.audio['sample_rate'])
+                linear_spec = plot_spectrogram(linear_spec, ap)
+                align_img = plot_alignment(alignment)
+                tb.add_figure('TestSentences/{}_Spectrogram'.format(idx),
+                            linear_spec, current_step)
+                tb.add_figure('TestSentences/{}_Alignment'.format(idx), align_img,
+                            current_step)
+            except:
+                print(" !! Error as creating Test Sentence -", idx)
+                traceback.print_exc()
+                pass
     return avg_linear_loss
 
 
@@ -545,8 +546,9 @@ if __name__ == '__main__':
                                                        'config.json'))
         os.chmod(AUDIO_PATH, 0o775)
         os.chmod(OUT_PATH, 0o775)
-        LOG_DIR = OUT_PATH
-        tb = SummaryWriter(LOG_DIR)
+
+    LOG_DIR = OUT_PATH
+    tb = SummaryWriter(LOG_DIR)
 
    
 
