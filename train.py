@@ -403,17 +403,6 @@ def main(args):
         init_distributed(args.rank, num_gpus, args.group_id,
                          c.distributed["backend"], c.distributed["url"])
 
-    # Conditional imports
-    preprocessor = importlib.import_module('datasets.preprocess')
-    preprocessor = getattr(preprocessor, c.dataset.lower())
-    MyDataset = importlib.import_module('datasets.' + c.data_loader)
-    MyDataset = getattr(MyDataset, "MyDataset")
-    audio = importlib.import_module('utils.' + c.audio['audio_processor'])
-    AudioProcessor = getattr(audio, 'AudioProcessor')
-
-    # Audio processor
-    ap = AudioProcessor(**c.audio)
-
     model = Tacotron(c.embedding_size, ap.num_freq, ap.num_mels, c.r)
     print(" | > Num output units : {}".format(ap.num_freq), flush=True)
 
@@ -544,6 +533,17 @@ if __name__ == '__main__':
 
     LOG_DIR = OUT_PATH
     tb = SummaryWriter(LOG_DIR)
+
+    # Conditional imports
+    preprocessor = importlib.import_module('datasets.preprocess')
+    preprocessor = getattr(preprocessor, c.dataset.lower())
+    MyDataset = importlib.import_module('datasets.' + c.data_loader)
+    MyDataset = getattr(MyDataset, "MyDataset")
+    audio = importlib.import_module('utils.' + c.audio['audio_processor'])
+    AudioProcessor = getattr(audio, 'AudioProcessor')
+
+    # Audio processor
+    ap = AudioProcessor(**c.audio)
 
     # try:
     main(args)
