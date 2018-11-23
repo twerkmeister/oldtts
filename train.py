@@ -28,15 +28,42 @@ from utils.synthesis import synthesis
 
 torch.backends.cudnn.enabled = True
 torch.backends.cudnn.benchmark = False
-torch.manual_seed(1)
+torch.manual_seed(54321)
 use_cuda = torch.cuda.is_available()
 num_gpus = torch.cuda.device_count()
 print(" > Using CUDA: ", use_cuda)
 print(" > Number of GPUs: ", num_gpus)
 
 
-def train(model, criterion, criterion_st, data_loader, optimizer, optimizer_st,
-          scheduler, ap, epoch):
+def setup_loader(is_val=False):
+    if is_val and not c.run_eval:
+        loader = None
+    else:
+        dataset = MyDataset(
+            c.data_path,
+            c.meta_file_train,
+            c.r,
+            c.text_cleaner,
+            preprocessor=preprocessor,
+            ap=ap,
+            batch_group_size=0 if is_val else 8 * c.batch_size,
+            min_seq_len=0 if is_val else c.min_seq_len)
+        sampler = DistributedSampler(dataset) if num_gpus > 1 else None
+        loader = DataLoader(
+            dataset,
+            batch_size=c.eval_batch_size if is_val else c.batch_size,
+            shuffle=False,
+            collate_fn=dataset.collate_fn,
+            drop_last=False,
+            sampler=sampler,
+            num_workers=c.num_val_loader_workers if is_val else c.num_loader_workers,
+            pin_memory=False)
+    return loader
+
+
+def train(model, criterion, criterion_st, optimizer, optimizer_st, scheduler,
+          ap, epoch):
+    data_loader = setup_loader(is_val=False)
     model = model.train()
     epoch_time = 0
     avg_linear_loss = 0
@@ -104,7 +131,6 @@ def train(model, criterion, criterion_st, data_loader, optimizer, optimizer_st,
 
         # backpass and check the grad norm for stop loss
         stop_loss.backward()
-        # custom weight decay
         optimizer_st, _ = weight_decay(optimizer_st, c.wd)
         grad_norm_st, _ = check_update(model.decoder.stopnet, 0.5)
         optimizer_st.step()
@@ -180,6 +206,7 @@ def train(model, criterion, criterion_st, data_loader, optimizer, optimizer_st,
                         current_step,
                         sample_rate=c.sample_rate)
                 except:
+                    traceback.print_exc()
                     pass
 
     avg_linear_loss /= (num_iter + 1)
@@ -211,6 +238,8 @@ def train(model, criterion, criterion_st, data_loader, optimizer, optimizer_st,
 
 
 def evaluate(model, criterion, criterion_st, data_loader, ap, current_step):
+    global c
+    data_loader = setup_loader(is_val=True)
     model = model.eval()
     epoch_time = 0
     avg_linear_loss = 0
@@ -277,56 +306,66 @@ def evaluate(model, criterion, criterion_st, data_loader, ap, current_step):
                                                     stop_loss.item()),
                         flush=True)
 
+                # aggregate losses from processes
+                if num_gpus > 1:
+                    linear_loss = reduce_tensor(linear_loss.data, num_gpus)
+                    mel_loss = reduce_tensor(mel_loss.data, num_gpus)
+                    stop_loss = reduce_tensor(stop_loss.data, num_gpus)
+
                 avg_linear_loss += linear_loss.item()
                 avg_mel_loss += mel_loss.item()
                 avg_stop_loss += stop_loss.item()
 
-            # Diagnostic visualizations
-            idx = np.random.randint(mel_input.shape[0])
-            const_spec = linear_output[idx].data.cpu().numpy()
-            gt_spec = linear_input[idx].data.cpu().numpy()
-            align_img = alignments[idx].data.cpu().numpy()
+            if args.rank == 0:
+                # Diagnostic visualizations
+                idx = np.random.randint(mel_input.shape[0])
+                const_spec = linear_output[idx].data.cpu().numpy()
+                gt_spec = linear_input[idx].data.cpu().numpy()
+                align_img = alignments[idx].data.cpu().numpy()
 
-            const_spec = plot_spectrogram(const_spec, ap)
-            gt_spec = plot_spectrogram(gt_spec, ap)
-            align_img = plot_alignment(align_img)
+                const_spec = plot_spectrogram(const_spec, ap)
+                gt_spec = plot_spectrogram(gt_spec, ap)
+                align_img = plot_alignment(align_img)
 
-            tb.add_figure('ValVisual/Reconstruction', const_spec, current_step)
-            tb.add_figure('ValVisual/GroundTruth', gt_spec, current_step)
-            tb.add_figure('ValVisual/ValidationAlignment', align_img,
-                          current_step)
+                tb.add_figure('ValVisual/Reconstruction', const_spec,
+                              current_step)
+                tb.add_figure('ValVisual/GroundTruth', gt_spec, current_step)
+                tb.add_figure('ValVisual/ValidationAlignment', align_img,
+                              current_step)
 
-            # Sample audio
-            audio_signal = linear_output[idx].data.cpu().numpy()
-            ap.griffin_lim_iters = 60
-            audio_signal = ap.inv_spectrogram(audio_signal.T)
-            try:
-                tb.add_audio(
-                    'ValSampleAudio',
-                    audio_signal,
-                    current_step,
-                    sample_rate=c.sample_rate)
-            except:
-                # sometimes audio signal is out of boundaries
-                pass
+                # Sample audio
+                audio_signal = linear_output[idx].data.cpu().numpy()
+                ap.griffin_lim_iters = 60
+                audio_signal = ap.inv_spectrogram(audio_signal.T)
+                try:
+                    tb.add_audio(
+                        'ValSampleAudio',
+                        audio_signal,
+                        current_step,
+                        sample_rate=c.sample_rate)
+                except:
+                    traceback.print_exc()
+                    # sometimes audio signal is out of boundaries
+                    pass
 
-            # compute average losses
-            avg_linear_loss /= (num_iter + 1)
-            avg_mel_loss /= (num_iter + 1)
-            avg_stop_loss /= (num_iter + 1)
-            avg_total_loss = avg_mel_loss + avg_linear_loss + avg_stop_loss
+                # compute average losses
+                avg_linear_loss /= (num_iter + 1)
+                avg_mel_loss /= (num_iter + 1)
+                avg_stop_loss /= (num_iter + 1)
+                avg_total_loss = avg_mel_loss + avg_linear_loss + avg_stop_loss
 
-            # Plot Learning Stats
-            tb.add_scalar('ValEpochLoss/TotalLoss', avg_total_loss,
-                          current_step)
-            tb.add_scalar('ValEpochLoss/LinearLoss', avg_linear_loss,
-                          current_step)
-            tb.add_scalar('ValEpochLoss/MelLoss', avg_mel_loss, current_step)
-            tb.add_scalar('ValEpochLoss/Stop_loss', avg_stop_loss,
-                          current_step)
+                # Plot Learning Stats
+                tb.add_scalar('ValEpochLoss/TotalLoss', avg_total_loss,
+                              current_step)
+                tb.add_scalar('ValEpochLoss/LinearLoss', avg_linear_loss,
+                              current_step)
+                tb.add_scalar('ValEpochLoss/MelLoss', avg_mel_loss,
+                              current_step)
+                tb.add_scalar('ValEpochLoss/Stop_loss', avg_stop_loss,
+                              current_step)
 
     # test sentences
-    if c.run_test_synthesis:
+    if c.run_test_synthesis and args.rank == 0:
         ap.griffin_lim_iters = 60
         for idx, test_sentence in enumerate(test_sentences):
             try:
@@ -336,7 +375,7 @@ def evaluate(model, criterion, criterion_st, data_loader, ap, current_step):
                 file_path = os.path.join(AUDIO_PATH, str(current_step))
                 os.makedirs(file_path, exist_ok=True)
                 file_path = os.path.join(file_path,
-                                        "TestSentence_{}.wav".format(idx))
+                                         "TestSentence_{}.wav".format(idx))
                 ap.save_wav(wav, file_path)
 
                 wav_name = 'TestSentences/{}'.format(idx)
@@ -348,9 +387,9 @@ def evaluate(model, criterion, criterion_st, data_loader, ap, current_step):
                 linear_spec = plot_spectrogram(linear_spec, ap)
                 align_img = plot_alignment(alignment)
                 tb.add_figure('TestSentences/{}_Spectrogram'.format(idx),
-                            linear_spec, current_step)
-                tb.add_figure('TestSentences/{}_Alignment'.format(idx), align_img,
-                            current_step)
+                              linear_spec, current_step)
+                tb.add_figure('TestSentences/{}_Alignment'.format(idx),
+                              align_img, current_step)
             except:
                 print(" !! Error as creating Test Sentence -", idx)
                 traceback.print_exc()
@@ -361,7 +400,8 @@ def evaluate(model, criterion, criterion_st, data_loader, ap, current_step):
 def main(args):
     # DISTRUBUTED
     if num_gpus > 1:
-        init_distributed(args.rank, num_gpus, args.group_id, c.distributed["backend"], c.distributed["url"])
+        init_distributed(args.rank, num_gpus, args.group_id,
+                         c.distributed["backend"], c.distributed["url"])
 
     # Conditional imports
     preprocessor = importlib.import_module('datasets.preprocess')
@@ -374,55 +414,10 @@ def main(args):
     # Audio processor
     ap = AudioProcessor(**c.audio)
 
-    # Setup the dataset
-    train_dataset = MyDataset(
-        c.data_path,
-        c.meta_file_train,
-        c.r,
-        c.text_cleaner,
-        preprocessor=preprocessor,
-        ap=ap,
-        batch_group_size=8 * c.batch_size,
-        min_seq_len=c.min_seq_len)
-
-    # DISTRUBUTED
-    sampler = DistributedSampler(train_dataset) if num_gpus > 1 else None
-
-    train_loader = DataLoader(
-        train_dataset,
-        batch_size=c.batch_size,
-        shuffle=False,
-        collate_fn=train_dataset.collate_fn,
-        drop_last=False,
-        sampler=sampler,
-        num_workers=c.num_loader_workers,
-        pin_memory=False)
-
-    if c.run_eval and args.rank == 0:
-        val_dataset = MyDataset(
-            c.data_path,
-            c.meta_file_val,
-            c.r,
-            c.text_cleaner,
-            preprocessor=preprocessor,
-            ap=ap,
-            batch_group_size=0)
-
-        val_loader = DataLoader(
-            val_dataset,
-            batch_size=c.eval_batch_size,
-            shuffle=False,
-            collate_fn=val_dataset.collate_fn,
-            drop_last=False,
-            num_workers=4,
-            pin_memory=False)
-    else:
-        val_loader = None
-
     model = Tacotron(c.embedding_size, ap.num_freq, ap.num_mels, c.r)
     print(" | > Num output units : {}".format(ap.num_freq), flush=True)
 
-     # DISTRUBUTED
+    # DISTRUBUTED
     if num_gpus > 1:
         model = apply_gradient_allreduce(model)
 
@@ -470,9 +465,9 @@ def main(args):
 
     for epoch in range(0, c.epochs):
         train_loss, current_step = train(model, criterion, criterion_st,
-                                         train_loader, optimizer, optimizer_st,
+                                         optimizer, optimizer_st,
                                          scheduler, ap, epoch)
-        val_loss = evaluate(model, criterion, criterion_st, val_loader, ap,
+        val_loss = evaluate(model, criterion, criterion_st, ap,
                             current_step)
         val_loss = 0
         print(
@@ -537,7 +532,7 @@ if __name__ == '__main__':
 
     if args.group_id == '':
         OUT_PATH = create_experiment_folder(OUT_PATH, c.model_name, args.debug)
-    
+
     AUDIO_PATH = os.path.join(OUT_PATH, 'test_audios')
 
     if args.rank == 0:
@@ -550,17 +545,15 @@ if __name__ == '__main__':
     LOG_DIR = OUT_PATH
     tb = SummaryWriter(LOG_DIR)
 
-   
-
-    try:
-        main(args)
-    except KeyboardInterrupt:
-        remove_experiment_folder(OUT_PATH)
-        try:
-            sys.exit(0)
-        except SystemExit:
-            os._exit(0)
-    except Exception:
-        remove_experiment_folder(OUT_PATH)
-        traceback.print_exc()
-        sys.exit(1)
+    # try:
+    main(args)
+    # except KeyboardInterrupt:
+    #     remove_experiment_folder(OUT_PATH)
+    #     try:
+    #         sys.exit(0)
+    #     except SystemExit:
+    #         os._exit(0)
+    # except Exception:
+    #     remove_experiment_folder(OUT_PATH)
+    #     traceback.print_exc()
+    #     sys.exit(1)

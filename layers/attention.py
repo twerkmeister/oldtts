@@ -147,7 +147,7 @@ class AttentionRNNCell(nn.Module):
             alignment.masked_fill_(1 - mask, -float("inf"))
         # Normalize context weight
         # alignment = F.softmax(alignment, dim=-1)
-        alignment = 5 * alignment
+        # alignment = 5 * alignment
         alignment = torch.sigmoid(alignment) / torch.sigmoid(alignment).sum(dim=1).unsqueeze(1)
         # Attention context vector
         # (batch, 1, dim)
