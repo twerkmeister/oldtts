@@ -36,6 +36,7 @@ print(" > Number of GPUs: ", num_gpus)
 
 
 def setup_loader(is_val=False):
+    global ap
     if is_val and not c.run_eval:
         loader = None
     else:
@@ -73,7 +74,12 @@ def train(model, criterion, criterion_st, optimizer, optimizer_st, scheduler,
     print(" | > Epoch {}/{}".format(epoch, c.epochs), flush=True)
     n_priority_freq = int(
         3000 / (c.audio['sample_rate'] * 0.5) * c.audio['num_freq'])
-    batch_n_iter = int(len(data_loader.dataset) / (c.batch_size * num_gpus))
+
+    if num_gpus > 0:
+        batch_n_iter = int(len(data_loader.dataset) / (c.batch_size * num_gpus))
+    else:
+        batch_n_iter = int(len(data_loader.dataset) / c.batch_size) 
+
     for num_iter, data in enumerate(data_loader):
         model.zero_grad()
         start_time = time.time()
@@ -237,7 +243,7 @@ def train(model, criterion, criterion_st, optimizer, optimizer_st, scheduler,
     return avg_linear_loss, current_step
 
 
-def evaluate(model, criterion, criterion_st, data_loader, ap, current_step):
+def evaluate(model, criterion, criterion_st, ap, current_step):
     global c
     data_loader = setup_loader(is_val=True)
     model = model.eval()
@@ -342,7 +348,7 @@ def evaluate(model, criterion, criterion_st, data_loader, ap, current_step):
                         'ValSampleAudio',
                         audio_signal,
                         current_step,
-                        sample_rate=c.sample_rate)
+                        sample_rate=c.audio["sample_rate"])
                 except:
                     traceback.print_exc()
                     # sometimes audio signal is out of boundaries
@@ -465,8 +471,6 @@ def main(args):
             flush=True)
         best_loss = save_best_model(model, optimizer, train_loss, best_loss,
                                     OUT_PATH, current_step, epoch)
-        # shuffle batch groups
-        train_loader.dataset.sort_items()
 
 
 if __name__ == '__main__':
