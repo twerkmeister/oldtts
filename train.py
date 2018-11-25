@@ -42,7 +42,7 @@ def setup_loader(is_val=False):
     else:
         dataset = MyDataset(
             c.data_path,
-            c.meta_file_train,
+            c.meta_file_val if is_val else c.meta_file_train,
             c.r,
             c.text_cleaner,
             preprocessor=preprocessor,
