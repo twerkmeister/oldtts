@@ -92,6 +92,9 @@ def train(model, criterion, criterion_st, optimizer, optimizer_st, scheduler,
         mel_lengths = data[4]
         stop_targets = data[5]
 
+        avg_text_len = torch.mean(text_lengths.float())
+        avg_mel_len = torch.mean(mel_lengths.float())
+
         # set stop targets view, we predict a single stop token per r frames prediction
         stop_targets = stop_targets.view(text_input.shape[0],
                                          stop_targets.size(1) // c.r, -1)
@@ -149,10 +152,10 @@ def train(model, criterion, criterion_st, optimizer, optimizer_st, scheduler,
             print(
                 "   | > Step:{}/{}  GlobalStep:{}  TotalLoss:{:.5f}  LinearLoss:{:.5f}  "
                 "MelLoss:{:.5f}  StopLoss:{:.5f}  GradNorm:{:.5f}  "
-                "GradNormST:{:.5f}  StepTime:{:.2f} LR:{:.6f}".format(
+                "GradNormST:{:.5f}  StepTime:{:.2f}  AvgTextLen:{:.2f}  AvgSpecLen:{:.2f}  LR:{:.6f}".format(
                     num_iter, batch_n_iter, current_step, loss.item(),
                     linear_loss.item(), mel_loss.item(), stop_loss.item(),
-                    grad_norm, grad_norm_st, step_time, current_lr),
+                    grad_norm, grad_norm_st, step_time, avg_text_len, avg_mel_len, current_lr),
                 flush=True)
 
         # aggregate losses from processes
