@@ -307,11 +307,12 @@ class Decoder(nn.Module):
     def __init__(self, in_features, memory_dim, r):
         super(Decoder, self).__init__()
         self.r = r
+        self.memory_size = 5
         self.in_features = in_features
         self.max_decoder_steps = 500
         self.memory_dim = memory_dim
         # memory -> |Prenet| -> processed_memory
-        self.prenet = Prenet(memory_dim * r, out_features=[256, 128])
+        self.prenet = Prenet(memory_dim * self.memory_size, out_features=[256, 128])
         # processed_inputs, processed_memory -> |Attention| -> Attention, attention, RNN_State
         self.attention_rnn = AttentionRNNCell(
             out_dim=128,
@@ -367,8 +368,6 @@ class Decoder(nn.Module):
                 " !! Dimension mismatch {} vs {} * {}".format(
                     memory.size(-1), self.memory_dim, self.r)
             T_decoder = memory.size(1)
-        # go frame as zeros matrix
-        initial_memory = inputs.data.new(B, self.memory_dim * self.r).zero_()
         # decoder states
         attention_rnn_hidden = inputs.data.new(B, 256).zero_()
         decoder_rnn_hiddens = [
@@ -388,13 +387,14 @@ class Decoder(nn.Module):
         attentions = []
         stop_tokens = []
         t = 0
-        memory_input = initial_memory
+        memory_input = inputs.data.new(B, self.memory_dim * self.memory_size).zero_()
         while True:
             if t > 0:
                 if memory is None:
-                    memory_input = outputs[-1]
+                    new_memory = outputs[-1]
                 else:
-                    memory_input = memory[t - 1]
+                    new_memory = memory[t - 1]
+                memory_input = torch.cat([memory_input[:, self.r * self.memory_dim:].clone(), new_memory], dim=-1)
             # Prenet
             processed_memory = self.prenet(memory_input)
             # Attention RNN
