@@ -14,7 +14,7 @@ from torch.utils.data import DataLoader
 from tensorboardX import SummaryWriter
 
 from distribute import init_distributed, apply_gradient_allreduce, reduce_tensor
-from torch.utils.data.distributed import DistributedSampler
+from distribute import DistributedSampler
 
 from utils.generic_utils import (
     remove_experiment_folder, create_experiment_folder, save_checkpoint,
