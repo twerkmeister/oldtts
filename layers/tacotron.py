@@ -237,7 +237,6 @@ class CBHG(nn.Module):
             x = highway(x)
         # (B, T_in, hid_features*2)
         # TODO: replace GRU with convolution as in Deep Voice 3
-        self.gru.flatten_parameters()
         outputs, _ = self.gru(x)
         return outputs
 
