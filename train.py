@@ -433,7 +433,7 @@ def main(args):
         optimizer.load_state_dict(checkpoint['optimizer'])
         print(
             " > Model restored from step %d" % checkpoint['step'], flush=True)
-        start_epoch = checkpoint['step'] // len(train_loader)
+        start_epoch = checkpoint['epoch'] 
         best_loss = checkpoint['linear_loss']
         args.restore_step = checkpoint['step']
     else:
