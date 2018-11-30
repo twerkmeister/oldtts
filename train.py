@@ -165,9 +165,9 @@ def train(model, criterion, criterion_st, optimizer, optimizer_st, scheduler,
             loss = reduce_tensor(loss.data, num_gpus)
             stop_loss = reduce_tensor(stop_loss.data, num_gpus)
 
-        avg_linear_loss += linear_loss.item()
-        avg_mel_loss += mel_loss.item()
-        avg_stop_loss += stop_loss.item()
+        avg_linear_loss += float(linear_loss.item())
+        avg_mel_loss += float(mel_loss.item())
+        avg_stop_loss += float(stop_loss.item())
         avg_step_time += step_time
 
         if args.rank == 0:
@@ -467,7 +467,6 @@ def main(args):
                                          scheduler, ap, epoch)
         val_loss = evaluate(model, criterion, criterion_st, ap,
                             current_step)
-        val_loss = 0
         print(
             " | > Train Loss: {:.5f}   Validation Loss: {:.5f}".format(
                 train_loss, val_loss),
