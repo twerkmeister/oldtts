@@ -415,10 +415,6 @@ def main(args):
     model = Tacotron(c.embedding_size, ap.num_freq, ap.num_mels, c.r)
     print(" | > Num output units : {}".format(ap.num_freq), flush=True)
 
-    # DISTRUBUTED
-    if num_gpus > 1:
-        model = apply_gradient_allreduce(model)
-
     optimizer = optim.Adam(model.parameters(), lr=c.lr, weight_decay=0)
     optimizer_st = optim.Adam(
         model.decoder.stopnet.parameters(), lr=c.lr, weight_decay=0)
@@ -446,6 +442,10 @@ def main(args):
             model = model.cuda()
             criterion.cuda()
             criterion_st.cuda()
+
+    # DISTRUBUTED
+    if num_gpus > 1:
+        model = apply_gradient_allreduce(model)
 
     if c.lr_decay:
         scheduler = AnnealLR(

@@ -311,7 +311,7 @@ class Decoder(nn.Module):
         self.max_decoder_steps = 500
         self.memory_dim = memory_dim
         # memory -> |Prenet| -> processed_memory
-        self.prenet = Prenet(memory_dim * self.memory_size, out_features=[256, 128])
+        self.prenet_new = Prenet(memory_dim * self.memory_size, out_features=[256, 128])
         # processed_inputs, processed_memory -> |Attention| -> Attention, attention, RNN_State
         self.attention_rnn = AttentionRNNCell(
             out_dim=128,
@@ -395,13 +395,13 @@ class Decoder(nn.Module):
                     new_memory = memory[t - 1]
                 memory_input = torch.cat([memory_input[:, self.r * self.memory_dim:].clone(), new_memory], dim=-1)
             # Prenet
-            processed_memory = self.prenet(memory_input)
+            processed_memory = self.prenet_new(memory_input)
             # Attention RNN
             attention_cat = torch.cat(
                 (attention.unsqueeze(1), attention_cum.unsqueeze(1)), dim=1)
             attention_rnn_hidden, current_context_vec, attention = self.attention_rnn(
                 processed_memory, current_context_vec, attention_rnn_hidden,
-                inputs, attention_cat, mask)
+                inputs, attention_cat, mask, t)
             attention_cum += attention
             # Concat RNN output and attention context vector
             decoder_input = self.project_to_decoder_in(
