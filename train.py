@@ -442,7 +442,7 @@ def main(args):
             model = model.cuda()
             criterion.cuda()
             criterion_st.cuda()
-        # optimizer.load_state_dict(checkpoint['optimizer'])
+        optimizer.load_state_dict(checkpoint['optimizer'])
         print(
             " > Model restored from step %d" % checkpoint['step'], flush=True)
         start_epoch = checkpoint['epoch'] 
