@@ -424,12 +424,25 @@ def main(args):
 
     if len(args.restore_path) > 1:
         checkpoint = torch.load(args.restore_path)
-        model.load_state_dict(checkpoint['model'])
+        try:
+            model.load_state_dict(checkpoint['model'])
+        except RuntimeError:
+            print(" | > Trying to load restore model partially.")
+            model_dict = model.state_dict()
+            # 1. filter out unnecessary keys
+            pretrained_dict = {
+                k: v
+                for k, v in checkpoint['model'].items() if k in model_dict
+            }
+            # 2. overwrite entries in the existing state dict
+            model_dict.update(pretrained_dict)
+            # 3. load the new state dict
+            model.load_state_dict(model_dict)
         if use_cuda:
             model = model.cuda()
             criterion.cuda()
             criterion_st.cuda()
-        optimizer.load_state_dict(checkpoint['optimizer'])
+        # optimizer.load_state_dict(checkpoint['optimizer'])
         print(
             " > Model restored from step %d" % checkpoint['step'], flush=True)
         start_epoch = checkpoint['epoch'] 
