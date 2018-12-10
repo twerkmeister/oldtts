@@ -65,7 +65,7 @@ def setup_loader(is_val=False):
 def train(model, criterion, criterion_st, optimizer, optimizer_st, scheduler,
           ap, epoch):
     data_loader = setup_loader(is_val=False)
-    model = model.train()
+    model.train()
     epoch_time = 0
     avg_linear_loss = 0
     avg_mel_loss = 0
@@ -249,7 +249,7 @@ def train(model, criterion, criterion_st, optimizer, optimizer_st, scheduler,
 def evaluate(model, criterion, criterion_st, ap, current_step):
     global c
     data_loader = setup_loader(is_val=True)
-    model = model.eval()
+    model.eval()
     epoch_time = 0
     avg_linear_loss = 0
     avg_mel_loss = 0
