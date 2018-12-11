@@ -564,15 +564,15 @@ if __name__ == '__main__':
     # Audio processor
     ap = AudioProcessor(**c.audio)
 
-    # try:
-    main(args)
-    # except KeyboardInterrupt:
-    #     remove_experiment_folder(OUT_PATH)
-    #     try:
-    #         sys.exit(0)
-    #     except SystemExit:
-    #         os._exit(0)
-    # except Exception:
-    #     remove_experiment_folder(OUT_PATH)
-    #     traceback.print_exc()
-    #     sys.exit(1)
+    try:
+        main(args)
+    except KeyboardInterrupt:
+        remove_experiment_folder(OUT_PATH)
+        try:
+            sys.exit(0)
+        except SystemExit:
+            os._exit(0)
+    except Exception:
+        remove_experiment_folder(OUT_PATH)
+        traceback.print_exc()
+        sys.exit(1)

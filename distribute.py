@@ -1,4 +1,4 @@
-# inspired from https://github.com/fastai/imagenet-fast/blob/master/imagenet_nv/distributed.py
+# edited from https://github.com/fastai/imagenet-fast/blob/master/imagenet_nv/distributed.py
 
 import os
 import sys
@@ -80,6 +80,7 @@ def init_distributed(rank, num_gpus, group_name, dist_backend, dist_url):
 
 def apply_gradient_allreduce(module):
 
+    # sync model parameters
     for p in module.state_dict().values():
         if not torch.is_tensor(p):
             continue
@@ -88,6 +89,7 @@ def apply_gradient_allreduce(module):
     def allreduce_params():
         if (module.needs_reduction):
             module.needs_reduction = False
+            # bucketing params based on value types
             buckets = {}
             for param in module.parameters():
                 if param.requires_grad and param.grad is not None:

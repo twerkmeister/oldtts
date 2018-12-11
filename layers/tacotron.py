@@ -18,7 +18,7 @@ class Prenet(nn.Module):
         super(Prenet, self).__init__()
         in_features = [in_features] + out_features[:-1]
         self.layers = nn.ModuleList([
-            nn.Linear(in_size, out_size)
+            nn.Linear(in_size, out_size, bias=False)
             for (in_size, out_size) in zip(in_features, out_features)
         ])
         self.relu = nn.ReLU()
