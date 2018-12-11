@@ -57,7 +57,7 @@ class DistributedSampler(Sampler):
 
 def reduce_tensor(tensor, num_gpus):
     rt = tensor.clone()
-    dist.all_reduce(rt, op=dist.reduce_op.SUM)
+    dist.all_reduce(rt, op=dist.ReduceOp.SUM)
     rt /= num_gpus
     return rt
 
@@ -99,7 +99,7 @@ def apply_gradient_allreduce(module):
                 bucket = buckets[tp]
                 grads = [param.grad.data for param in bucket]
                 coalesced = _flatten_dense_tensors(grads)
-                dist.all_reduce(coalesced)
+                dist.all_reduce(coalesced, op=dist.ReduceOp.SUM)
                 coalesced /= dist.get_world_size()
                 for buf, synced in zip(
                         grads, _unflatten_dense_tensors(coalesced, grads)):
@@ -112,7 +112,6 @@ def apply_gradient_allreduce(module):
 
         if param.requires_grad:
             param.register_hook(allreduce_hook)
-            dir(param)
 
     def set_needs_reduction(self, input, output):
         self.needs_reduction = True
