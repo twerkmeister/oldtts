@@ -21,8 +21,8 @@ class Prenet(nn.Module):
             nn.Linear(in_size, out_size, bias=False)
             for (in_size, out_size) in zip(in_features, out_features)
         ])
-        self.relu = nn.ReLU()
-        self.dropout = nn.Dropout(0.5)
+        self.relu = nn.RReLU()
+        # self.dropout = nn.Dropout(0.5)
         # self.init_layers()
 
     def init_layers(self):
@@ -33,7 +33,8 @@ class Prenet(nn.Module):
 
     def forward(self, inputs):
         for linear in self.layers:
-            inputs = self.dropout(self.relu(linear(inputs)))
+            # inputs = self.dropout(self.relu(linear(inputs)))
+            inputs = self.relu(linear(inputs))
         return inputs
 
 
