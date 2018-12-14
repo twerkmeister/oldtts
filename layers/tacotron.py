@@ -310,7 +310,7 @@ class Decoder(nn.Module):
         self.r = r
         self.memory_size = 5
         self.in_features = in_features
-        self.max_decoder_steps = 500
+        self.max_decoder_steps = 1500
         self.memory_dim = memory_dim
         # memory -> |Prenet| -> processed_memory
         self.prenet_new = Prenet(memory_dim * self.memory_size, out_features=[256, 128])
