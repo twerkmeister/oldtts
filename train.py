@@ -443,6 +443,8 @@ def main(args):
             criterion.cuda()
             criterion_st.cuda()
         optimizer.load_state_dict(checkpoint['optimizer'])
+        for g in optimizer.param_groups:
+            g['lr'] = c.lr
         print(
             " > Model restored from step %d" % checkpoint['step'], flush=True)
         start_epoch = checkpoint['epoch'] 
