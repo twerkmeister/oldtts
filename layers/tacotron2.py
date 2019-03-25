@@ -388,7 +388,7 @@ class Decoder(nn.Module):
 
         self.attention_layer.init_win_idx()
         outputs, stop_tokens, alignments, t = [], [], [], 0
-        stop_flags = [False, False, False]
+        stop_flags = [True, False, False]
         while True:
             memory = self.prenet(memory)
             mel_output, stop_token, alignment = self.decode(memory)
@@ -397,8 +397,8 @@ class Decoder(nn.Module):
             stop_tokens += [stop_token]
             alignments += [alignment]
 
-            stop_flags[0] = stop_flags[0] or stop_token > 0.5
-            stop_flags[1] = stop_flags[1] or (alignment[0, -2:].sum() > 0.5 and t > inputs.shape[1])
+            # stop_flags[0] = stop_flags[0] or stop_token > 0.25
+            stop_flags[1] = stop_flags[1] or (alignment[0, -2:].sum() > 0.8 and t > inputs.shape[1])
             stop_flags[2] = t > inputs.shape[1]
             if all(stop_flags):
                 break
