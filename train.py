@@ -124,7 +124,8 @@ def train(model, criterion, criterion_st, optimizer, optimizer_st, scheduler,
             text_input, text_lengths,  mel_input)
 
         # loss computation
-        stop_loss = criterion_st(stop_tokens, stop_targets)
+        # stop_loss = criterion_st(stop_tokens, stop_targets)
+        stop_loss = 0
         decoder_loss = criterion(decoder_output, mel_input, mel_lengths)
         if c.model == "Tacotron":
             postnet_loss = criterion(postnet_output, linear_input, mel_lengths)
@@ -139,10 +140,11 @@ def train(model, criterion, criterion_st, optimizer, optimizer_st, scheduler,
         optimizer.step()
 
         # backpass and check the grad norm for stop loss
-        stop_loss.backward()
-        optimizer_st, _ = weight_decay(optimizer_st, c.wd)
-        grad_norm_st, _ = check_update(model.decoder.stopnet, 1.0)
-        optimizer_st.step()
+        # stop_loss.backward()
+        # optimizer_st, _ = weight_decay(optimizer_st, c.wd)
+        grad_norm_st = 0
+        # grad_norm_st, _ = check_update(model.decoder.stopnet, 1.0)
+        # optimizer_st.step()
 
         step_time = time.time() - start_time
         epoch_time += step_time
@@ -153,7 +155,7 @@ def train(model, criterion, criterion_st, optimizer, optimizer_st, scheduler,
                 "DecoderLoss:{:.5f}  StopLoss:{:.5f}  GradNorm:{:.5f}  "
                 "GradNormST:{:.5f}  AvgTextLen:{:.1f}  AvgSpecLen:{:.1f}  StepTime:{:.2f}  LR:{:.6f}".format(
                     num_iter, batch_n_iter, current_step, loss.item(),
-                    postnet_loss.item(), decoder_loss.item(), stop_loss.item(),
+                    postnet_loss.item(), decoder_loss.item(), stop_loss,
                     grad_norm, grad_norm_st, avg_text_length, avg_spec_length, step_time, current_lr),
                 flush=True)
 
@@ -162,12 +164,12 @@ def train(model, criterion, criterion_st, optimizer, optimizer_st, scheduler,
             postnet_loss = reduce_tensor(postnet_loss.data, num_gpus)
             decoder_loss = reduce_tensor(decoder_loss.data, num_gpus)
             loss = reduce_tensor(loss.data, num_gpus)
-            stop_loss = reduce_tensor(stop_loss.data, num_gpus)
+            # stop_loss = reduce_tensor(stop_loss.data, num_gpus)
 
         if args.rank == 0:
             avg_postnet_loss += float(postnet_loss.item())
             avg_decoder_loss += float(decoder_loss.item())
-            avg_stop_loss += stop_loss.item()
+            avg_stop_loss += stop_loss
             avg_step_time += step_time
 
             # Plot Training Iter Stats
