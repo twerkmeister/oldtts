@@ -55,10 +55,10 @@ def get_commit_hash():
 def create_experiment_folder(root_path, model_name, debug):
     """ Create a folder with the current date and time """
     date_str = datetime.datetime.now().strftime("%B-%d-%Y_%I+%M%p")
-    # if debug:
-    # commit_hash = 'debug'
-    # else:
-    commit_hash = get_commit_hash()
+    if debug:
+        commit_hash = 'debug'
+    else:
+        commit_hash = get_commit_hash()
     output_folder = os.path.join(
         root_path, model_name + '-' + date_str + '-' + commit_hash)
     os.makedirs(output_folder, exist_ok=True)
@@ -251,6 +251,7 @@ def setup_model(num_chars, c):
     if c.model.lower() == "tacotron":
         model = MyModel(
             num_chars=num_chars,
+            num_speakers=c.num_speakers,
             r=c.r,
             attn_win=c.windowing,
             attn_norm=c.attention_norm,
@@ -258,6 +259,7 @@ def setup_model(num_chars, c):
     elif c.model.lower() == "tacotron2":
         model = MyModel(
             num_chars=num_chars,
+            num_speakers=c.num_speakers,
             r=c.r,
             attn_win=c.windowing,
             attn_norm=c.attention_norm,

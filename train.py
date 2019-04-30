@@ -90,10 +90,11 @@ def train(model, criterion, criterion_st, optimizer, optimizer_st, scheduler,
         # setup input data
         text_input = data[0]
         text_lengths = data[1]
-        linear_input = data[2] if c.model == "Tacotron" else None
-        mel_input = data[3]
-        mel_lengths = data[4]
-        stop_targets = data[5]
+        speaker_ids = data[2]
+        linear_input = data[3] if c.model == "Tacotron" else None
+        mel_input = data[4]
+        mel_lengths = data[5]
+        stop_targets = data[6]
         avg_text_length = torch.mean(text_lengths.float())
         avg_spec_length = torch.mean(mel_lengths.float())
 
@@ -115,6 +116,7 @@ def train(model, criterion, criterion_st, optimizer, optimizer_st, scheduler,
         if use_cuda:
             text_input = text_input.cuda(non_blocking=True)
             text_lengths = text_lengths.cuda(non_blocking=True)
+            speaker_ids = speaker_ids.cuda(non_blocking=True)
             mel_input = mel_input.cuda(non_blocking=True)
             mel_lengths = mel_lengths.cuda(non_blocking=True)
             linear_input = linear_input.cuda(non_blocking=True) if c.model == "Tacotron" else None
@@ -122,7 +124,7 @@ def train(model, criterion, criterion_st, optimizer, optimizer_st, scheduler,
 
         # forward pass model
         decoder_output, postnet_output, alignments, stop_tokens = model(
-            text_input, text_lengths,  mel_input)
+            text_input, text_lengths, speaker_ids, mel_input)
 
         # loss computation
         stop_loss = criterion_st(stop_tokens, stop_targets)
@@ -266,10 +268,11 @@ def evaluate(model, criterion, criterion_st, ap, current_step, epoch):
                 # setup input data
                 text_input = data[0]
                 text_lengths = data[1]
-                linear_input = data[2] if c.model == "Tacotron" else None
-                mel_input = data[3]
-                mel_lengths = data[4]
-                stop_targets = data[5]
+                speaker_ids = data[2]
+                linear_input = data[3] if c.model == "Tacotron" else None
+                mel_input = data[4]
+                mel_lengths = data[5]
+                stop_targets = data[6]
 
                 # set stop targets view, we predict a single stop token per r frames prediction
                 stop_targets = stop_targets.view(text_input.shape[0],
@@ -280,6 +283,7 @@ def evaluate(model, criterion, criterion_st, ap, current_step, epoch):
                 # dispatch data to GPU
                 if use_cuda:
                     text_input = text_input.cuda()
+                    speaker_ids = speaker_ids.cuda()
                     mel_input = mel_input.cuda()
                     mel_lengths = mel_lengths.cuda()
                     linear_input = linear_input.cuda() if c.model == "Tacotron" else None
@@ -287,7 +291,8 @@ def evaluate(model, criterion, criterion_st, ap, current_step, epoch):
 
                 # forward pass
                 decoder_output, postnet_output, alignments, stop_tokens =\
-                    model.forward(text_input, text_lengths, mel_input)
+                    model.forward(text_input, text_lengths,
+                                  speaker_ids, mel_input)
 
                 # loss computation
                 stop_loss = criterion_st(stop_tokens, stop_targets)
@@ -542,7 +547,8 @@ if __name__ == '__main__':
         new_fields = {}
         if args.restore_path:
             new_fields["restore_path"] = args.restore_path
-        new_fields["github_branch"] = get_git_branch()
+        # new_fields["github_branch"] = get_git_branch()
+        new_fields["github_branch"] = "generic"
         copy_config_file(args.config_path, os.path.join(OUT_PATH, 'config.json'), new_fields)
         os.chmod(AUDIO_PATH, 0o775)
         os.chmod(OUT_PATH, 0o775)

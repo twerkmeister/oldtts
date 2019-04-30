@@ -8,7 +8,7 @@ def tts_cache(root_path, meta_file):
     with open(txt_file, 'r', encoding='utf8') as f:
         for line in f:
             cols = line.split('| ')
-            # text, wav_full_path, mel_name, linear_name, wav_len, mel_len
+            # text, wav_full_path, speaker, mel_name, linear_name, wav_len, mel_len
             items.append(cols)
     return items
 
@@ -18,13 +18,14 @@ def tweb(root_path, meta_file):
     https://www.kaggle.com/bryanpark/the-world-english-bible-speech-dataset
     """
     txt_file = os.path.join(root_path, meta_file)
+    speaker = txt_file
     items = []
     with open(txt_file, 'r') as ttf:
         for line in ttf:
             cols = line.split('\t')
             wav_file = os.path.join(root_path, cols[0] + '.wav')
             text = cols[1]
-            items.append([text, wav_file])
+            items.append([text, wav_file, speaker])
     return items
 
 
@@ -51,6 +52,7 @@ def mozilla(root_path, meta_files):
         folder = folders[idx]
         # txt_file = os.path.join(root_path, meta_file)
         txt_file = meta_file
+        speaker = txt_file
         with open(txt_file, 'r') as ttf:
             for line in ttf:
                 cols = line.split('|')
@@ -60,7 +62,7 @@ def mozilla(root_path, meta_files):
                                         cols[1].strip())
                 if os.path.isfile(wav_file):
                     text = cols[0].strip()
-                    items.append([text, wav_file])
+                    items.append([text, wav_file, speaker])
                 else:
                     print(" > Error: {}".format(wav_file))
                     continue
@@ -76,6 +78,7 @@ def mailabs(root_path, meta_files):
         print(" | > {}".format(meta_file))
         folder = folders[idx]
         txt_file = os.path.join(root_path, meta_file)
+        speaker = txt_file
         with open(txt_file, 'r') as ttf:
             for line in ttf:
                 cols = line.split('|')
@@ -83,7 +86,7 @@ def mailabs(root_path, meta_files):
                                         cols[0] + '.wav')
                 if os.path.isfile(wav_file):
                     text = cols[1]
-                    items.append([text, wav_file])
+                    items.append([text, wav_file, speaker])
                 else:
                     continue
     return items
@@ -92,26 +95,28 @@ def mailabs(root_path, meta_files):
 def ljspeech(root_path, meta_file):
     """Normalizes the Nancy meta data file to TTS format"""
     txt_file = os.path.join(root_path, meta_file)
+    speaker = txt_file
     items = []
     with open(txt_file, 'r') as ttf:
         for line in ttf:
             cols = line.split('|')
             wav_file = os.path.join(root_path, 'wavs', cols[0] + '.wav')
             text = cols[1]
-            items.append([text, wav_file])
+            items.append([text, wav_file, txt_file])
     return items
 
 
 def nancy(root_path, meta_file):
     """Normalizes the Nancy meta data file to TTS format"""
     txt_file = os.path.join(root_path, meta_file)
+    speaker = txt_file
     items = []
     with open(txt_file, 'r') as ttf:
         for line in ttf:
             id = line.split()[1]
             text = line[line.find('"') + 1:line.rfind('"') - 1]
             wav_file = os.path.join(root_path, "wavn", id + ".wav")
-            items.append([text, wav_file])
+            items.append([text, wav_file, speaker])
     return items
 
 
@@ -125,6 +130,7 @@ def common_voice(root_path, meta_file):
                 continue
             cols = line.split("\t")
             text = cols[2]
+            speaker = cols[0]
             wav_file = os.path.join(root_path, "clips", cols[1] + ".wav")
-            items.append([text, wav_file])
+            items.append([text, wav_file, speaker])
     return items

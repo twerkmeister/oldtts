@@ -5,6 +5,7 @@ import librosa
 import torch
 import random
 from torch.utils.data import Dataset
+from sklearn.preprocessing.label import LabelEncoder
 
 from utils.text import text_to_sequence, phoneme_to_sequence
 from utils.data import (prepare_data, pad_per_step, prepare_tensor,
@@ -36,9 +37,11 @@ class MyDataset(Dataset):
             outputs_per_step (int): number of time frames predicted per step.
             text_cleaner (str): text cleaner used for the dataset.
             ap (TTS.utils.AudioProcessor): audio processor object.
-            preprocessor (dataset.preprocess.Class): preprocessor for the dataset. 
+            preprocessor (dataset.preprocess.Class): preprocessor for the
+            dataset.
                 Create your own if you need to run a new dataset.
-            batch_group_size (int): (0) range of batch randomization after sorting 
+            batch_group_size (int): (0) range of batch randomization after
+            sorting
                 sequences by length. 
             min_seq_len (int): (0) minimum sequence length to be processed 
                 by the loader.
@@ -49,7 +52,8 @@ class MyDataset(Dataset):
             phoneme_cache_path (str): path to cache phoneme features. 
             phoneme_language (str): one the languages from 
                 https://github.com/bootphon/phonemizer#languages
-            enable_eos_bos (bool): enable end of sentence and beginning of sentences characters.
+            enable_eos_bos (bool): enable end of sentence and beginning of
+            sentences characters.
             verbose (bool): print diagnostic information.
         """
         self.root_path = root_path
@@ -67,6 +71,7 @@ class MyDataset(Dataset):
         self.phoneme_language = phoneme_language
         self.enable_eos_bos = enable_eos_bos
         self.verbose = verbose
+        self.speaker_id_encoder = LabelEncoder()
         if use_phonemes and not os.path.isdir(phoneme_cache_path):
             os.makedirs(phoneme_cache_path, exist_ok=True)
         if self.verbose:
@@ -78,6 +83,12 @@ class MyDataset(Dataset):
             print(" | > Cached dataset: {}".format(self.cached))
             print(" | > Number of instances : {}".format(len(self.items)))
         self.sort_items()
+        self.fit_speaker_id_encoder()
+
+    def fit_speaker_id_encoder(self):
+        """Fits the speaker id encoder to all speaker ids in items."""
+        speaker_ids = [i[2] for i in self.items]
+        self.speaker_id_encoder.fit(speaker_ids)
 
     def load_wav(self, filename):
         try:
@@ -98,22 +109,28 @@ class MyDataset(Dataset):
             try:
                 text = np.load(tmp_path)
             except:
-                print(" > ERROR: phoneme connot be loaded for {}. Recomputing.".format(wav_file))
+                print(
+                    " > ERROR: phoneme connot be loaded for {}. "
+                    "Recomputing.".format(
+                        wav_file))
                 text = np.asarray(
                     phoneme_to_sequence(
-                        text, [self.cleaners], language=self.phoneme_language, enable_eos_bos=self.enable_eos_bos),
+                        text, [self.cleaners], language=self.phoneme_language,
+                        enable_eos_bos=self.enable_eos_bos),
                     dtype=np.int32)
                 np.save(tmp_path, text)
         else:
             text = np.asarray(
                 phoneme_to_sequence(
-                    text, [self.cleaners], language=self.phoneme_language, enable_eos_bos=self.enable_eos_bos),
+                    text, [self.cleaners], language=self.phoneme_language,
+                    enable_eos_bos=self.enable_eos_bos),
                 dtype=np.int32)
             np.save(tmp_path, text)
         return text
 
     def load_data(self, idx):
         if self.cached:
+            raise NotImplementedError
             wav_name = self.items[idx][1]
             mel_name = self.items[idx][2]
             linear_name = self.items[idx][3]
@@ -126,7 +143,7 @@ class MyDataset(Dataset):
             mel = self.load_np(mel_name)
             linear = self.load_np(linear_name)
         else:
-            text, wav_file = self.items[idx]
+            text, wav_file, speaker = self.items[idx]
             wav = np.asarray(self.load_wav(wav_file), dtype=np.float32)
             mel = None
             linear = None
@@ -143,6 +160,7 @@ class MyDataset(Dataset):
         sample = {
             'text': text,
             'wav': wav,
+            'speaker': speaker,
             'item_idx': self.items[idx][1],
             'mel': mel,
             'linear': linear
@@ -152,7 +170,7 @@ class MyDataset(Dataset):
     def sort_items(self):
         r"""Sort instances based on text length in ascending order"""
         lengths = np.array([len(ins[0]) for ins in self.items])
-       
+
         idxs = np.argsort(lengths)
         new_items = []
         ignored = []
@@ -176,10 +194,12 @@ class MyDataset(Dataset):
             print(" | > Max length sequence: {}".format(np.max(lengths)))
             print(" | > Min length sequence: {}".format(np.min(lengths)))
             print(" | > Avg length sequence: {}".format(np.mean(lengths)))
-            print(" | > Num. instances discarded by max-min seq limits: {}".format(
-                len(ignored), self.min_seq_len))
+            print(
+                " | > Num. instances discarded by max-min seq limits: {"
+                "}".format(
+                    len(ignored), self.min_seq_len))
             print(" | > Batch group size: {}.".format(self.batch_group_size))
-        
+
     def __len__(self):
         return len(self.items)
 
@@ -207,6 +227,8 @@ class MyDataset(Dataset):
                 batch[idx]['item_idx'] for idx in ids_sorted_decreasing
             ]
             text = [batch[idx]['text'] for idx in ids_sorted_decreasing]
+            speakers = [batch[idx]['speaker'] for idx in ids_sorted_decreasing]
+            speaker_ids = self.speaker_id_encoder.transform(speakers)
 
             # if specs are not computed, compute them.
             if batch[0]['mel'] is None and batch[0]['linear'] is None:
@@ -251,8 +273,10 @@ class MyDataset(Dataset):
             mel = torch.FloatTensor(mel).contiguous()
             mel_lengths = torch.LongTensor(mel_lengths)
             stop_targets = torch.FloatTensor(stop_targets)
+            speaker_ids = torch.LongTensor(speaker_ids)
 
-            return text, text_lenghts, linear, mel, mel_lengths, stop_targets, item_idxs
+            return text, text_lenghts, speaker_ids, linear, mel, mel_lengths, \
+                   stop_targets, item_idxs
 
         raise TypeError(("batch must contain tensors, numbers, dicts or lists;\
                          found {}".format(type(batch[0]))))
