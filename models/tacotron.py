@@ -2,6 +2,8 @@
 import torch
 from torch import nn
 from math import sqrt
+
+from layers.style_encoder import GlobalStyleTokens
 from layers.tacotron import Prenet, Encoder, Decoder, PostCBHG
 from utils.generic_utils import sequence_mask
 
@@ -28,12 +30,18 @@ class Tacotron(nn.Module):
         self.last_linear = nn.Sequential(
             nn.Linear(self.postnet.cbhg.gru_features * 2, linear_dim),
             nn.Sigmoid())
+        self.global_style_tokens = GlobalStyleTokens(mel_dim, 8, 10,
+                                                     256, 128)
 
     def forward(self, characters, text_lengths, mel_specs):
         B = characters.size(0)
         mask = sequence_mask(text_lengths).to(characters.device)
         inputs = self.embedding(characters)
         encoder_outputs = self.encoder(inputs)
+        style_encoding = self.global_style_tokens(mel_specs)
+        style_encoding = style_encoding.expand(-1, encoder_outputs.size(1),
+                                               -1)
+        encoder_outputs = encoder_outputs + style_encoding
         mel_outputs, alignments, stop_tokens = self.decoder(
             encoder_outputs, mel_specs, mask)
         mel_outputs = mel_outputs.view(B, -1, self.mel_dim)
