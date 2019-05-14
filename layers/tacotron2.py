@@ -78,14 +78,15 @@ class Prenet(nn.Module):
         
 
 class ConvBNBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size, nonlinear=None):
+    def __init__(self, in_channels, out_channels, kernel_size, nonlinear=None,
+                 dropout=0.5):
         super(ConvBNBlock, self).__init__()
         assert (kernel_size - 1) % 2 == 0
         padding = (kernel_size - 1) // 2
         conv1d = nn.Conv1d(
             in_channels, out_channels, kernel_size, padding=padding)
         norm = nn.BatchNorm1d(out_channels)
-        dropout = nn.Dropout(p=0.5)
+        dropout = nn.Dropout(p=dropout)
         if nonlinear == 'relu':
             self.net = nn.Sequential(conv1d, norm, nn.ReLU(), dropout)
         elif nonlinear == 'tanh':
@@ -223,16 +224,19 @@ class Attention(nn.Module):
 
 
 class Postnet(nn.Module):
-    def __init__(self, mel_dim, num_convs=5):
+    def __init__(self, mel_dim, num_convs=5, num_feature_maps=512, dropout=0.5):
         super(Postnet, self).__init__()
         self.convolutions = nn.ModuleList()
         self.convolutions.append(
-            ConvBNBlock(mel_dim, 512, kernel_size=5, nonlinear='tanh'))
+            ConvBNBlock(mel_dim, num_feature_maps,
+                        kernel_size=5, nonlinear='tanh', dropout=dropout))
         for i in range(1, num_convs - 1):
             self.convolutions.append(
-                ConvBNBlock(512, 512, kernel_size=5, nonlinear='tanh'))
+                ConvBNBlock(num_feature_maps, num_feature_maps,
+                            kernel_size=5, nonlinear='tanh', dropout=dropout))
         self.convolutions.append(
-            ConvBNBlock(512, mel_dim, kernel_size=5, nonlinear=None))
+            ConvBNBlock(num_feature_maps, mel_dim,
+                        kernel_size=5, nonlinear=None, dropout=dropout))
 
     def forward(self, x):
         for layer in self.convolutions:

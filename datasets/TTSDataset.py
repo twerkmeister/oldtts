@@ -36,9 +36,11 @@ class MyDataset(Dataset):
             outputs_per_step (int): number of time frames predicted per step.
             text_cleaner (str): text cleaner used for the dataset.
             ap (TTS.utils.AudioProcessor): audio processor object.
-            preprocessor (dataset.preprocess.Class): preprocessor for the dataset. 
+            preprocessor (dataset.preprocess.Class): preprocessor for the
+            dataset.
                 Create your own if you need to run a new dataset.
-            batch_group_size (int): (0) range of batch randomization after sorting 
+            batch_group_size (int): (0) range of batch randomization after
+            sorting
                 sequences by length. 
             min_seq_len (int): (0) minimum sequence length to be processed 
                 by the loader.
@@ -49,7 +51,8 @@ class MyDataset(Dataset):
             phoneme_cache_path (str): path to cache phoneme features. 
             phoneme_language (str): one the languages from 
                 https://github.com/bootphon/phonemizer#languages
-            enable_eos_bos (bool): enable end of sentence and beginning of sentences characters.
+            enable_eos_bos (bool): enable end of sentence and beginning of
+            sentences characters.
             verbose (bool): print diagnostic information.
         """
         self.root_path = root_path
@@ -98,16 +101,21 @@ class MyDataset(Dataset):
             try:
                 text = np.load(tmp_path)
             except:
-                print(" > ERROR: phoneme connot be loaded for {}. Recomputing.".format(wav_file))
+                print(
+                    " > ERROR: phoneme connot be loaded for {}. "
+                    "Recomputing.".format(
+                        wav_file))
                 text = np.asarray(
                     phoneme_to_sequence(
-                        text, [self.cleaners], language=self.phoneme_language, enable_eos_bos=self.enable_eos_bos),
+                        text, [self.cleaners], language=self.phoneme_language,
+                        enable_eos_bos=self.enable_eos_bos),
                     dtype=np.int32)
                 np.save(tmp_path, text)
         else:
             text = np.asarray(
                 phoneme_to_sequence(
-                    text, [self.cleaners], language=self.phoneme_language, enable_eos_bos=self.enable_eos_bos),
+                    text, [self.cleaners], language=self.phoneme_language,
+                    enable_eos_bos=self.enable_eos_bos),
                 dtype=np.int32)
             np.save(tmp_path, text)
         return text
@@ -152,7 +160,7 @@ class MyDataset(Dataset):
     def sort_items(self):
         r"""Sort instances based on text length in ascending order"""
         lengths = np.array([len(ins[0]) for ins in self.items])
-       
+
         idxs = np.argsort(lengths)
         new_items = []
         ignored = []
@@ -176,10 +184,12 @@ class MyDataset(Dataset):
             print(" | > Max length sequence: {}".format(np.max(lengths)))
             print(" | > Min length sequence: {}".format(np.min(lengths)))
             print(" | > Avg length sequence: {}".format(np.mean(lengths)))
-            print(" | > Num. instances discarded by max-min seq limits: {}".format(
-                len(ignored), self.min_seq_len))
+            print(
+                " | > Num. instances discarded by max-min seq limits: {"
+                "}".format(
+                    len(ignored), self.min_seq_len))
             print(" | > Batch group size: {}.".format(self.batch_group_size))
-        
+
     def __len__(self):
         return len(self.items)
 
@@ -199,7 +209,7 @@ class MyDataset(Dataset):
         if isinstance(batch[0], collections.Mapping):
 
             text_lenghts = np.array([len(d["text"]) for d in batch])
-            text_lenghts, ids_sorted_decreasing = torch.sort(
+            text_lenghts_t, ids_sorted_decreasing = torch.sort(
                 torch.LongTensor(text_lenghts), dim=0, descending=True)
 
             wav = [batch[idx]['wav'] for idx in ids_sorted_decreasing]
@@ -213,12 +223,12 @@ class MyDataset(Dataset):
                 mel = [
                     self.ap.melspectrogram(w).astype('float32') for w in wav
                 ]
-                linear = [
-                    self.ap.spectrogram(w).astype('float32') for w in wav
-                ]
+                # linear = [
+                #     self.ap.spectrogram(w).astype('float32') for w in wav
+                # ]
             else:
                 mel = [d['mel'] for d in batch]
-                linear = [d['linear'] for d in batch]
+                # linear = [d['linear'] for d in batch]
             mel_lengths = [m.shape[1] + 1 for m in mel]  # +1 for zero-frame
 
             # compute 'stop token' targets
@@ -235,24 +245,39 @@ class MyDataset(Dataset):
             wav = prepare_data(wav)
 
             # PAD features with largest length + a zero frame
-            linear = prepare_tensor(linear, self.outputs_per_step)
+            # linear = prepare_tensor(linear, self.outputs_per_step)
             mel = prepare_tensor(mel, self.outputs_per_step)
-            assert mel.shape[2] == linear.shape[2]
+            # assert mel.shape[2] == linear.shape[2]
             timesteps = mel.shape[2]
 
             # B x T x D
-            linear = linear.transpose(0, 2, 1)
+            # linear = linear.transpose(0, 2, 1)
             mel = mel.transpose(0, 2, 1)
 
+            relative_timer = [np.linspace(0.1, np.pi - 0.1, text_lenghts[idx])
+                              for idx in ids_sorted_decreasing]
+            relative_timer = prepare_data(relative_timer)
+            absolute_timer = [np.arange(0.9, text_lenghts[idx]) / 10.0
+                              for idx in ids_sorted_decreasing]
+            absolute_timer = prepare_data(absolute_timer)
+
+            timers = np.stack((np.sin(relative_timer),
+                               np.sin(absolute_timer),
+                               np.cos(relative_timer),
+                               np.cos(absolute_timer)),
+                              axis=2)
+
             # convert things to pytorch
-            text_lenghts = torch.LongTensor(text_lenghts)
+            text_lenghts_t = torch.LongTensor(text_lenghts_t)
             text = torch.LongTensor(text)
-            linear = torch.FloatTensor(linear).contiguous()
+            # linear = torch.FloatTensor(linear).contiguous()
             mel = torch.FloatTensor(mel).contiguous()
             mel_lengths = torch.LongTensor(mel_lengths)
             stop_targets = torch.FloatTensor(stop_targets)
+            timers = torch.FloatTensor(timers).contiguous()
 
-            return text, text_lenghts, linear, mel, mel_lengths, stop_targets, item_idxs
+            return text, text_lenghts_t, mel, mel_lengths, stop_targets, \
+                   item_idxs, timers
 
         raise TypeError(("batch must contain tensors, numbers, dicts or lists;\
                          found {}".format(type(batch[0]))))

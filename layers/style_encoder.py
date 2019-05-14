@@ -8,13 +8,18 @@ class GlobalStyleTokens(nn.Module):
 
     See https://arxiv.org/pdf/1803.09017"""
 
-    def __init__(self, num_mel, num_heads, num_style_tokens,
-                 text_encoding_dim, prosody_encoding_dim):
+    # def __init__(self, num_mel, num_heads, num_style_tokens,
+    #              text_encoding_dim, prosody_encoding_dim):
+    def __init__(self, num_mel, num_style_tokens, token_dim,
+                 prosody_encoding_dim, scoring_function_name,
+                 use_separate_keys):
         super().__init__()
+        scoring_function = getattr(torch, scoring_function_name)
         self.encoder = ReferenceEncoder(num_mel, prosody_encoding_dim)
-        self.style_token_layer = StyleTokenLayer(num_heads, num_style_tokens,
-                                                 text_encoding_dim,
-                                                 prosody_encoding_dim)
+        self.style_token_layer = StyleTokenLayer(num_style_tokens,
+                                                 token_dim,
+                                                 prosody_encoding_dim,
+                                                 scoring_function)
 
     def forward(self, inputs):
         enc_out = self.encoder(inputs)
@@ -85,76 +90,129 @@ class ReferenceEncoder(nn.Module):
 class StyleTokenLayer(nn.Module):
     """NN Module attending to style tokens based on prosody encodings."""
 
-    def __init__(self, num_heads, num_style_tokens,
-                 text_encoding_dim, prosody_encoding_dim):
+    # def __init__(self, num_heads, num_style_tokens,
+    #              text_encoding_dim, prosody_encoding_dim):
+    def __init__(self, num_style_tokens,
+                 token_dim, prosody_encoding_dim, scoring_function,
+                 use_separate_keys=True):
         super().__init__()
-        self.token_dim = text_encoding_dim // num_heads
+        # self.token_dim = text_encoding_dim // num_heads
+        self.token_dim = token_dim
         self.style_tokens = nn.Parameter(
             torch.FloatTensor(num_style_tokens, self.token_dim))
-        nn.init.normal_(self.style_tokens, mean=0, std=0.5)
-        self.attention = MultiTokenAttention(prosody_encoding_dim,
-                                             self.token_dim,
-                                             text_encoding_dim,
-                                             num_heads)
+        nn.init.normal_(self.style_tokens, mean=0, std=0.3)
+        if use_separate_keys:
+            self.keys = nn.Parameter(
+                torch.FloatTensor(num_style_tokens, self.token_dim))
+            nn.init.normal_(self.keys, mean=0, std=0.3)
+        else:
+            self.keys = None
+        self.attention = SparseTokenAttention(prosody_encoding_dim, token_dim,
+                                              scoring_function)
+        # self.attention = MultiTokenAttention(prosody_encoding_dim,
+        #                                      self.token_dim,
+        #                                      text_encoding_dim,
+        #                                      num_heads)
 
     def forward(self, inputs):
         batch_size = inputs.size(0)
         prosody_encoding = inputs.unsqueeze(1)
         # prosody_encoding: 3D tensor [batch_size, 1, encoding_size==128]
-        tokens = F.tanh(self.style_tokens) \
-            .unsqueeze(0) \
-            .expand(batch_size, -1, -1)
+        tokens = self.shape_for_attention(self.style_tokens, batch_size)
+        keys = self.shape_for_attention(self.keys, batch_size)
         # tokens: 3D tensor [batch_size, num tokens, token embedding size]
-        style_embed = self.attention(prosody_encoding, tokens)
+        style_embed = self.attention(prosody_encoding, tokens, keys)
 
         return style_embed
 
+    def shape_for_attention(self, tokens, batch_size):
+        """Shapes tokens and keys."""
+        if tokens is None:
+            return None
+        else:
+            return tokens.unsqueeze(0).expand(batch_size, -1, -1)
 
-class MultiTokenAttention(nn.Module):
-    """Attention on a set of style tokens with multiple attention heads.
 
-    Multi head attention: https://arxiv.org/abs/1706.03762"""
+# class MultiTokenAttention(nn.Module):
+#     """Attention on a set of style tokens with multiple attention heads.
+#
+#     Multi head attention: https://arxiv.org/abs/1706.03762"""
+#
+#     def __init__(self, prosody_encoding_dim, token_dim,
+#                  text_encoding_dim, num_heads):
+#         super().__init__()
+#         self.num_heads = num_heads
+#         self.prosody_encoding_dim = prosody_encoding_dim
+#         self.token_dim = token_dim
+#         self.text_encoding_dim = text_encoding_dim
+#
+#         self.W_prosody_encoding = nn.Linear(prosody_encoding_dim,
+#                                             text_encoding_dim,
+#                                             bias=False)
+#         self.W_token = nn.Linear(token_dim, text_encoding_dim, bias=False)
+#         self.W_out = nn.Linear(text_encoding_dim, text_encoding_dim, bias=False)
+#
+#     def forward(self, prosody_encoding, tokens):
+#         prosody_encoding = self.W_prosody_encoding(prosody_encoding)
+#         # prosody_encoding: 3D Tensor [batch_size, 1,
+#         #                              text encoding dim]
+#         tokens = self.W_token(tokens)
+#         # tokens: 3D Tensor [batch_size, num tokens, text encoding dim]
+#
+#         prosody_encoding = torch.stack(
+#             torch.split(prosody_encoding, self.token_dim, dim=2), dim=0)
+#         # prosody_encoding: 4D tensor [num_heads, batch_size, 1,
+#         #                               token dim]
+#         tokens = torch.stack(
+#             torch.split(tokens, self.token_dim, dim=2), dim=0)
+#         # tokens: 4D tensor [num heads, batch size, num tokens, token dim]
+#
+#         # score = softmax(QK^T / (d_k ** 0.5))
+#         scores = torch.matmul(prosody_encoding, tokens.transpose(2, 3))
+#         # scores: 4D tensor [num heads, batch size, 1, num tokens]
+#         scores = scores / (self.token_dim ** 0.5)
+#         scores = F.softmax(scores, dim=3)
+#
+#         # out = score * V
+#         out = torch.matmul(scores, tokens)
+#         # out: 4D tensor [num heads, batch size, 1, token dim]
+#         out = torch.cat(torch.split(out, 1, dim=0), dim=3).squeeze(0)
+#         # out: 3D tensor [batch_size, 1, text encoding dim]
+#         out = self.W_out(out)
+#
+#         return out
 
-    def __init__(self, prosody_encoding_dim, token_dim,
-                 text_encoding_dim, num_heads):
+
+class SparseTokenAttention(nn.Module):
+    """Attention on a set of sparse style tokens."""
+
+    def __init__(self, prosody_encoding_dim, token_dim, scoring_function):
         super().__init__()
-        self.num_heads = num_heads
         self.prosody_encoding_dim = prosody_encoding_dim
         self.token_dim = token_dim
-        self.text_encoding_dim = text_encoding_dim
+        self.scoring_function = scoring_function
 
         self.W_prosody_encoding = nn.Linear(prosody_encoding_dim,
-                                            text_encoding_dim,
-                                            bias=False)
-        self.W_token = nn.Linear(token_dim, text_encoding_dim, bias=False)
-        self.W_out = nn.Linear(text_encoding_dim, text_encoding_dim, bias=False)
+                                            token_dim)
+        self.W_out = nn.Linear(token_dim, token_dim)
 
-    def forward(self, prosody_encoding, tokens):
+    def forward(self, prosody_encoding, tokens, keys=None):
         prosody_encoding = self.W_prosody_encoding(prosody_encoding)
-        # prosody_encoding: 3D Tensor [batch_size, 1,
-        #                              text encoding dim]
-        tokens = self.W_token(tokens)
-        # tokens: 3D Tensor [batch_size, num tokens, text encoding dim]
+        # prosody_encoding: 3D Tensor [batch_size, 1, token_dim]
+        # tokens: 3D Tensor [batch_size, num tokens, token_dim]
+        # keys 3D Tensor like tokens or None
 
-        prosody_encoding = torch.stack(
-            torch.split(prosody_encoding, self.token_dim, dim=2), dim=0)
-        # prosody_encoding: 4D tensor [num_heads, batch_size, 1,
-        #                               token dim]
-        tokens = torch.stack(
-            torch.split(tokens, self.token_dim, dim=2), dim=0)
-        # tokens: 4D tensor [num heads, batch size, num tokens, token dim]
-
-        # score = softmax(QK^T / (d_k ** 0.5))
-        scores = torch.matmul(prosody_encoding, tokens.transpose(2, 3))
-        # scores: 4D tensor [num heads, batch size, 1, num tokens]
-        scores = scores / (self.token_dim ** 0.5)
-        scores = F.softmax(scores, dim=3)
+        keys = keys if keys is not None else tokens
+        scores = torch.matmul(prosody_encoding, keys.transpose(1, 2))
+        # scores: 3D tensor [batch size, 1, num tokens]
+        # scores = scores / (self.token_dim ** 0.5)
+        scores = self.scoring_function(scores)
 
         # out = score * V
         out = torch.matmul(scores, tokens)
-        # out: 4D tensor [num heads, batch size, 1, token dim]
-        out = torch.cat(torch.split(out, 1, dim=0), dim=3).squeeze(0)
-        # out: 3D tensor [batch_size, 1, text encoding dim]
+        # out: 3D tensor [batch size, 1, token dim]
         out = self.W_out(out)
 
         return out
+
+

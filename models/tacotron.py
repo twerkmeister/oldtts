@@ -5,6 +5,7 @@ from math import sqrt
 
 from layers.style_encoder import GlobalStyleTokens
 from layers.tacotron import Prenet, Encoder, Decoder, PostCBHG
+from layers.tacotron2 import Postnet
 from utils.generic_utils import sequence_mask
 
 
@@ -25,15 +26,19 @@ class Tacotron(nn.Module):
         self.embedding = nn.Embedding(num_chars, 256, padding_idx=padding_idx)
         self.embedding.weight.data.normal_(0, 0.3)
         self.encoder = Encoder(256)
-        self.decoder = Decoder(256, mel_dim, r, memory_size, attn_win, attn_norm)
-        self.postnet = PostCBHG(mel_dim)
-        self.last_linear = nn.Sequential(
-            nn.Linear(self.postnet.cbhg.gru_features * 2, linear_dim),
-            nn.Sigmoid())
-        self.global_style_tokens = GlobalStyleTokens(mel_dim, 8, 10,
-                                                     256, 128)
+        self.decoder = Decoder(256 + 64 + 4, mel_dim, r, memory_size, attn_win,
+                               attn_norm)
+        self.postnet = Postnet(mel_dim, num_convs=5, num_feature_maps=256,
+                               dropout=0.1)
+        self.global_style_tokens = GlobalStyleTokens(mel_dim, 128,
+                                                     64, 128)
 
-    def forward(self, characters, text_lengths, mel_specs):
+    def shape_outputs(self, mel_outputs, mel_outputs_postnet, alignments):
+        mel_outputs = mel_outputs.transpose(1, 2)
+        mel_outputs_postnet = mel_outputs_postnet.transpose(1, 2)
+        return mel_outputs, mel_outputs_postnet, alignments
+
+    def forward(self, characters, text_lengths, mel_specs, timers):
         B = characters.size(0)
         mask = sequence_mask(text_lengths).to(characters.device)
         inputs = self.embedding(characters)
@@ -41,21 +46,34 @@ class Tacotron(nn.Module):
         style_encoding = self.global_style_tokens(mel_specs)
         style_encoding = style_encoding.expand(-1, encoder_outputs.size(1),
                                                -1)
-        encoder_outputs = encoder_outputs + style_encoding
+
+        concatenated = torch.cat((encoder_outputs, style_encoding, timers), 2)
+
+        # encoder_outputs = encoder_outputs + style_encoding
         mel_outputs, alignments, stop_tokens = self.decoder(
-            encoder_outputs, mel_specs, mask)
+            concatenated, mel_specs, mask)
         mel_outputs = mel_outputs.view(B, -1, self.mel_dim)
-        linear_outputs = self.postnet(mel_outputs)
-        linear_outputs = self.last_linear(linear_outputs)
-        return mel_outputs, linear_outputs, alignments, stop_tokens
+        mel_outputs = mel_outputs.transpose(1, 2)
+        mel_outputs_postnet = self.postnet(mel_outputs)
+        mel_outputs, mel_outputs_postnet, alignments = self.shape_outputs(
+            mel_outputs, mel_outputs_postnet, alignments)
+        return mel_outputs, mel_outputs_postnet, alignments, stop_tokens
 
     def inference(self, characters):
         B = characters.size(0)
         inputs = self.embedding(characters)
         encoder_outputs = self.encoder(inputs)
+        style_encoding = torch.zeros((1, 1, 64)).cuda(non_blocking=True)
+        style_encoding = style_encoding.expand(-1, encoder_outputs.size(1),
+                                               -1)
+
+        concatenated = torch.cat((encoder_outputs, style_encoding), 2)
+
         mel_outputs, alignments, stop_tokens = self.decoder.inference(
-            encoder_outputs)
+            concatenated)
         mel_outputs = mel_outputs.view(B, -1, self.mel_dim)
-        linear_outputs = self.postnet(mel_outputs)
-        linear_outputs = self.last_linear(linear_outputs)
-        return mel_outputs, linear_outputs, alignments, stop_tokens
+        mel_outputs = mel_outputs.transpose(1, 2)
+        mel_outputs_postnet = self.postnet(mel_outputs)
+        mel_outputs, mel_outputs_postnet, alignments = self.shape_outputs(
+            mel_outputs, mel_outputs_postnet, alignments)
+        return mel_outputs, mel_outputs_postnet, alignments, stop_tokens
