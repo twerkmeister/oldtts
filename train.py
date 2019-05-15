@@ -212,11 +212,13 @@ def train(model, criterion, criterion_st, optimizer, optimizer_st, scheduler,
                                     epoch)
 
                 # Diagnostic visualizations
+                decoder_spec = decoder_output[0].data.cpu().numpy()
                 const_spec = postnet_output[0].data.cpu().numpy()
                 gt_spec = mel_input[0].data.cpu().numpy()
                 align_img = alignments[0].data.cpu().numpy()
 
                 figures = {
+                    "prediction_decoder": plot_spectrogram(decoder_spec, ap),
                     "prediction": plot_spectrogram(const_spec, ap),
                     "ground_truth": plot_spectrogram(gt_spec, ap),
                     "alignment": plot_alignment(align_img)
@@ -224,13 +226,12 @@ def train(model, criterion, criterion_st, optimizer, optimizer_st, scheduler,
                 tb_logger.tb_train_figures(current_step, figures)
 
                 # Sample audio
-                if c.model == "Tacotron":
-                    train_audio = ap.inv_mel_spectrogram(const_spec.T)
-                else:
-                    train_audio = ap.inv_mel_spectrogram(const_spec.T)
-                tb_logger.tb_train_audios(current_step, 
-                                            {'TrainAudio': train_audio},
-                                            c.audio["sample_rate"])
+                postnet_audio = ap.inv_mel_spectrogram(const_spec.T)
+                decoder_audio = ap.inv_mel_spectrogram(decoder_spec.T)
+                tb_logger.tb_train_audios(current_step,
+                                          {'postnet_audio': postnet_audio,
+                                           'decoder_audio': decoder_audio},
+                                          c.audio["sample_rate"])
 
     avg_postnet_loss /= (num_iter + 1)
     avg_decoder_loss /= (num_iter + 1)
@@ -355,11 +356,13 @@ def evaluate(model, criterion, criterion_st, ap, current_step, epoch, c):
                 # Diagnostic visualizations
                 idx = np.random.randint(mel_input.shape[0])
                 postnet_spec = postnet_output[idx].data.cpu().numpy()
+                decoder_spec = decoder_output[idx].data.cpu().numpy()
 
                 gt_spec = mel_input[idx].data.cpu().numpy()
                 align_img = alignments[idx].data.cpu().numpy()
 
                 eval_figures = {
+                    "decoder_spec": plot_spectrogram(decoder_spec, ap),
                     "post_net": plot_spectrogram(postnet_spec, ap),
                     "ground_truth": plot_spectrogram(gt_spec, ap),
                     "alignment": plot_alignment(align_img)
@@ -367,11 +370,12 @@ def evaluate(model, criterion, criterion_st, ap, current_step, epoch, c):
                 tb_logger.tb_eval_figures(current_step, eval_figures)
 
                 # Sample audio
-                if c.model == "Tacotron":
-                    eval_audio = ap.inv_mel_spectrogram(postnet_spec.T)
-                else:
-                    eval_audio = ap.inv_mel_spectrogram(postnet_spec.T)
-                tb_logger.tb_eval_audios(current_step, {"ValAudio": eval_audio}, c.audio["sample_rate"])
+                eval_audio = ap.inv_mel_spectrogram(postnet_spec.T)
+                eval_decoder_audio = ap.inv_mel_spectrogram(decoder_spec.T)
+                tb_logger.tb_eval_audios(current_step,
+                                         {"ValAudio": eval_audio,
+                                          "ValDecAudio": eval_decoder_audio},
+                                         c.audio["sample_rate"])
 
                 # compute average losses
                 avg_postnet_loss /= (num_iter + 1)
