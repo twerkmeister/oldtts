@@ -1,7 +1,7 @@
     {
     "audio":{
         "audio_processor": "audio",     // to use dictate different audio processors, if available.
-        "num_mels": 80,         // size of the mel spec frame. 
+        "num_mels": 80,         // size of the mel spec frame.
         "num_freq": 1025,       // number of stft frequency levels. Size of the linear spectogram frame.
         "sample_rate": 22050,   // wav sample-rate. If different than the original data, it is resampled.
         "frame_length_ms": 50,  // stft window length in ms.
@@ -33,10 +33,26 @@
     "priority_freq": false,
     "num_loader_workers": 4,
     "memory_size": 5,
+    "windowing": false,            // Enables attention windowing. Used only in eval mode.
+    "memory_size": 5,              // ONLY TACOTRON - memory queue size used to queue network predictions to feed autoregressive connection. Useful if r < 5.
+    "attention_norm": "softmax",   // softmax or sigmoid. Suggested to use softmax for Tacotron2 and sigmoid for Tacotron.
+    "prenet_type": "original",     // ONLY TACOTRON2 - "original" or "bn".
+    "prenet_dropout": true,        // ONLY TACOTRON2 - enable/disable dropout at prenet.
+    "use_forward_attn": true,      // ONLY TACOTRON2 - if it uses forward attention. In general, it aligns faster.
+    "transition_agent": false,     // ONLY TACOTRON2 - enable/disable transition agent of forward attention.
+    "location_attn": false,        // ONLY TACOTRON2 - enable_disable location sensitive attention. It is enabled for TACOTRON by default.
+    "loss_masking": false,         // enable / disable loss masking against the sequence padding.
+    "enable_eos_bos_chars": false, // enable/disable beginning of sentence and end of sentence chars.
+    "stopnet": true,               // Train stopnet predicting the end of synthesis.
+    "separate_stopnet": false,     // Train stopnet seperately if 'stopnet==true'. It prevents stopnet loss to influence the rest of the model. It causes a better model, but it trains SLOWER.
+    "num_style_tokens": 128,
+    "style_token_dim": 64,
+    "prosody_encoding_dim": 128,
+    "scoring_func_name": "tanh",
+    "use_separate_keys": true,
 
     "save_step": 200,
     "data_path": "/home/erogol/Data/LJSpeech-1.1/",
-    "data_path_cache": "/media/erogol/data_ssd/Data/Nancy/tts_cache/",
     "output_path": "result",
     "min_seq_len": 0,
     "max_seq_len": 300,

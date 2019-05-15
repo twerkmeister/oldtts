@@ -38,8 +38,12 @@ print(" > Using CUDA: ", use_cuda)
 print(" > Number of GPUs: ", num_gpus)
 
 
-def setup_loader(is_val=False, verbose=False):
-    global ap
+def preprocessor_factory(dataset_type):
+    preprocessor_module = importlib.import_module('datasets.preprocess')
+    return getattr(preprocessor_module, dataset_type.lower())
+
+
+def setup_loader(ap, c, is_val=False, verbose=False):
     if is_val and not c.run_eval:
         loader = None
     else:
@@ -48,12 +52,11 @@ def setup_loader(is_val=False, verbose=False):
             c.meta_file_val if is_val else c.meta_file_train,
             c.r,
             c.text_cleaner,
-            preprocessor=preprocessor,
+            preprocessor=preprocessor_factory(c.dataset),
             ap=ap,
             batch_group_size=0 if is_val else c.batch_group_size * c.batch_size,
             min_seq_len=0 if is_val else c.min_seq_len,
             max_seq_len=float("inf") if is_val else c.max_seq_len,
-            cached=False if c.dataset != "tts_cache" else True,
             phoneme_cache_path=c.phoneme_cache_path,
             use_phonemes=c.use_phonemes,
             phoneme_language=c.phoneme_language,
@@ -74,8 +77,9 @@ def setup_loader(is_val=False, verbose=False):
 
 
 def train(model, criterion, criterion_st, optimizer, optimizer_st, scheduler,
-          ap, epoch):
-    data_loader = setup_loader(is_val=False, verbose=(epoch==0))
+          ap, epoch, c):
+    is_first_epoch = epoch == 0
+    data_loader = setup_loader(ap, c, is_val=False, verbose=is_first_epoch)
     model.train()
     epoch_time = 0
     avg_postnet_loss = 0
@@ -110,7 +114,7 @@ def train(model, criterion, criterion_st, optimizer, optimizer_st, scheduler,
         if c.lr_decay:
             scheduler.step()
         optimizer.zero_grad()
-        optimizer_st.zero_grad()
+        if optimizer_st: optimizer_st.zero_grad();
 
         # dispatch data to GPU
         if use_cuda:
@@ -126,7 +130,7 @@ def train(model, criterion, criterion_st, optimizer, optimizer_st, scheduler,
             text_input, text_lengths,  mel_input, timers)
 
         # loss computation
-        stop_loss = criterion_st(stop_tokens, stop_targets)
+        stop_loss = criterion_st(stop_tokens, stop_targets) if c.stopnet else torch.zeros(1)
         if c.loss_masking:
             decoder_loss = criterion(decoder_output, mel_input, mel_lengths)
             if c.model == "Tacotron":
@@ -142,18 +146,26 @@ def train(model, criterion, criterion_st, optimizer, optimizer_st, scheduler,
 
         style_token_loss = 1e-5 * model.global_style_tokens.style_token_layer.style_tokens.norm(1)
         loss = decoder_loss + postnet_loss + style_token_loss
+        if not c.separate_stopnet and c.stopnet:
+            loss += stop_loss
 
         # backpass and check the grad norm for spec losses
-        loss.backward(retain_graph=True)
+        if c.separate_stopnet:
+            loss.backward(retain_graph=True)
+        else:
+            loss.backward()
         optimizer, current_lr = weight_decay(optimizer, c.wd)
         grad_norm, _ = check_update(model, c.grad_clip)
         optimizer.step()
 
         # backpass and check the grad norm for stop loss
-        stop_loss.backward()
-        optimizer_st, _ = weight_decay(optimizer_st, c.wd)
-        grad_norm_st, _ = check_update(model.decoder.stopnet, 1.0)
-        optimizer_st.step()
+        if c.separate_stopnet:
+            stop_loss.backward()
+            optimizer_st, _ = weight_decay(optimizer_st, c.wd)
+            grad_norm_st, _ = check_update(model.decoder.stopnet, 1.0)
+            optimizer_st.step()
+        else:
+            grad_norm_st = 0
 
         step_time = time.time() - start_time
         epoch_time += step_time
@@ -173,13 +185,13 @@ def train(model, criterion, criterion_st, optimizer, optimizer_st, scheduler,
             postnet_loss = reduce_tensor(postnet_loss.data, num_gpus)
             decoder_loss = reduce_tensor(decoder_loss.data, num_gpus)
             loss = reduce_tensor(loss.data, num_gpus)
-            stop_loss = reduce_tensor(stop_loss.data, num_gpus)
+            stop_loss = reduce_tensor(stop_loss.data, num_gpus) if c.stopnet else stop_loss
 
         if args.rank == 0:
             avg_postnet_loss += float(postnet_loss.item())
             avg_decoder_loss += float(decoder_loss.item())
-            avg_stop_loss += stop_loss.item()
             avg_token_loss += style_token_loss.item()
+            avg_stop_loss += stop_loss if type(stop_loss) is float else float(stop_loss.item())
             avg_step_time += step_time
 
             # Plot Training Iter Stats
@@ -253,8 +265,8 @@ def train(model, criterion, criterion_st, optimizer, optimizer_st, scheduler,
     return avg_postnet_loss, current_step
 
 
-def evaluate(model, criterion, criterion_st, ap, current_step, epoch):
-    data_loader = setup_loader(is_val=True)
+def evaluate(model, criterion, criterion_st, ap, current_step, epoch, c):
+    data_loader = setup_loader(ap, c, is_val=True)
     model.eval()
     epoch_time = 0
     avg_postnet_loss = 0
@@ -301,7 +313,7 @@ def evaluate(model, criterion, criterion_st, ap, current_step, epoch):
                     model.forward(text_input, text_lengths, mel_input, timers)
 
                 # loss computation
-                stop_loss = criterion_st(stop_tokens, stop_targets)
+                stop_loss = criterion_st(stop_tokens, stop_targets) if c.stopnet else torch.zeros(1)
                 if c.loss_masking:
                     decoder_loss = criterion(decoder_output, mel_input, mel_lengths)
                     if c.model == "Tacotron":
@@ -332,7 +344,8 @@ def evaluate(model, criterion, criterion_st, ap, current_step, epoch):
                 if num_gpus > 1:
                     postnet_loss = reduce_tensor(postnet_loss.data, num_gpus)
                     decoder_loss = reduce_tensor(decoder_loss.data, num_gpus)
-                    stop_loss = reduce_tensor(stop_loss.data, num_gpus)
+                    if c.stopnet:
+                        stop_loss = reduce_tensor(stop_loss.data, num_gpus)
 
                 avg_postnet_loss += float(postnet_loss.item())
                 avg_decoder_loss += float(decoder_loss.item())
@@ -396,25 +409,30 @@ def evaluate(model, criterion, criterion_st, ap, current_step, epoch):
     return avg_postnet_loss
 
 
-def main(args):
+def main(args, c):
     # DISTRUBUTED
     if num_gpus > 1:
         init_distributed(args.rank, num_gpus, args.group_id,
                          c.distributed["backend"], c.distributed["url"])
-    num_chars = len(phonemes) if c.use_phonemes else len(symbols)
-    model = setup_model(num_chars, c)
+    model = setup_model(c)
+
+    # Audio processor
+    ap = AudioProcessor(**c.audio)
 
     print(" | > Num output units : {}".format(ap.num_freq), flush=True)
 
     optimizer = optim.Adam(model.parameters(), lr=c.lr, weight_decay=0)
-    optimizer_st = optim.Adam(
-        model.decoder.stopnet.parameters(), lr=c.lr, weight_decay=0)
+    if c.stopnet and c.separate_stopnet:
+        optimizer_st = optim.Adam(
+            model.decoder.stopnet.parameters(), lr=c.lr, weight_decay=0)
+    else:
+        optimizer_st = None
 
     if c.loss_masking:
         criterion = L1LossMasked() if c.model == "Tacotron" else MSELossMasked()
     else:
         criterion = nn.L1Loss() if c.model == "Tacotron" else nn.MSELoss()
-    criterion_st = nn.BCEWithLogitsLoss()
+    criterion_st = nn.BCEWithLogitsLoss() if c.stopnet else None
 
     if args.restore_path:
         checkpoint = torch.load(args.restore_path)
@@ -432,23 +450,19 @@ def main(args):
             model_dict = set_init_dict(model_dict, checkpoint, c)
             model.load_state_dict(model_dict)
             del model_dict
-        if use_cuda:
-            model = model.cuda()
-            criterion.cuda()
-            criterion_st.cuda()
         for group in optimizer.param_groups:
             group['lr'] = c.lr
         print(
             " > Model restored from step %d" % checkpoint['step'], flush=True)
         start_epoch = checkpoint['epoch']
-        # best_loss = checkpoint['postnet_loss']
         args.restore_step = checkpoint['step']
     else:
         args.restore_step = 0
-        if use_cuda:
-            model = model.cuda()
-            criterion.cuda()
-            criterion_st.cuda()
+
+    if use_cuda:
+        model = model.cuda()
+        criterion.cuda()
+        if criterion_st: criterion_st.cuda();
 
     # DISTRUBUTED
     if num_gpus > 1:
@@ -471,8 +485,9 @@ def main(args):
     for epoch in range(0, c.epochs):
         train_loss, current_step = train(model, criterion, criterion_st,
                                          optimizer, optimizer_st, scheduler,
-                                         ap, epoch)
-        val_loss = evaluate(model, criterion, criterion_st, ap, current_step, epoch)
+                                         ap, epoch, c)
+        val_loss = evaluate(model, criterion, criterion_st,
+                            ap, current_step, epoch, c)
         print(
             " | > Training Loss: {:.5f}   Validation Loss: {:.5f}".format(
                 train_loss, val_loss),
@@ -517,7 +532,6 @@ if __name__ == '__main__':
         default='',
         help='folder name for traning outputs.'
     )
-
     # DISTRUBUTED
     parser.add_argument(
         '--rank',
@@ -533,12 +547,12 @@ if __name__ == '__main__':
 
     # setup output paths and read configs
     c = load_config(args.config_path)
-    _ = os.path.dirname(os.path.realpath(__file__))
+    base_dir = os.path.dirname(os.path.realpath(__file__))
     if args.data_path != '':
         c.data_path = args.data_path
 
     if args.output_path == '':
-        OUT_PATH = os.path.join(_, c.output_path)
+        OUT_PATH = os.path.join(base_dir, c.output_path)
     else:
         OUT_PATH = args.output_path
 
@@ -555,23 +569,15 @@ if __name__ == '__main__':
         if args.restore_path:
             new_fields["restore_path"] = args.restore_path
         new_fields["github_branch"] = get_git_branch()
-        copy_config_file(args.config_path, os.path.join(OUT_PATH, 'config.json'), new_fields)
+        copy_config_file(args.config_path,
+                         os.path.join(OUT_PATH, 'config.json'), new_fields)
         os.chmod(AUDIO_PATH, 0o775)
         os.chmod(OUT_PATH, 0o775)
-
-    if args.rank==0:
         LOG_DIR = OUT_PATH
         tb_logger = Logger(LOG_DIR)
 
-    # Conditional imports
-    preprocessor = importlib.import_module('datasets.preprocess')
-    preprocessor = getattr(preprocessor, c.dataset.lower())
-
-    # Audio processor
-    ap = AudioProcessor(**c.audio)
-
     try:
-        main(args)
+        main(args, c)
     except KeyboardInterrupt:
         remove_experiment_folder(OUT_PATH)
         try:
