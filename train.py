@@ -98,7 +98,6 @@ def train(model, criterion, criterion_st, optimizer, optimizer_st, scheduler,
         mel_input = data[2]
         mel_lengths = data[3]
         stop_targets = data[4]
-        timers = data[6]
         avg_text_length = torch.mean(text_lengths.float())
         avg_spec_length = torch.mean(mel_lengths.float())
 
@@ -123,11 +122,10 @@ def train(model, criterion, criterion_st, optimizer, optimizer_st, scheduler,
             mel_input = mel_input.cuda(non_blocking=True)
             mel_lengths = mel_lengths.cuda(non_blocking=True)
             stop_targets = stop_targets.cuda(non_blocking=True)
-            timers = timers.cuda(non_blocking=True)
 
         # forward pass model
-        decoder_output, postnet_output, alignments, stop_tokens = model(
-            text_input, text_lengths,  mel_input, timers)
+        decoder_output, postnet_output, alignments, \
+        stop_tokens, token_scores = model(text_input, text_lengths,  mel_input)
 
         # loss computation
         stop_loss = criterion_st(stop_tokens, stop_targets) if c.stopnet else torch.zeros(1)
@@ -144,7 +142,8 @@ def train(model, criterion, criterion_st, optimizer, optimizer_st, scheduler,
             else:
                 postnet_loss = criterion(postnet_output, mel_input)
 
-        style_token_loss = 1e-5 * model.global_style_tokens.style_token_layer.style_tokens.norm(1)
+        # style_token_loss = 1e-5 * model.global_style_tokens.style_token_layer.style_tokens.norm(1)
+        style_token_loss = 1e-4 * token_scores.norm(1)
         loss = decoder_loss + postnet_loss + style_token_loss
         if not c.separate_stopnet and c.stopnet:
             loss += stop_loss
@@ -273,6 +272,7 @@ def evaluate(model, criterion, criterion_st, ap, current_step, epoch, c):
     avg_postnet_loss = 0
     avg_decoder_loss = 0
     avg_stop_loss = 0
+    avg_token_loss = 0
     print("\n > Validation")
     test_sentences = [
         "It took me quite a long time to develop a voice, and now that I have it I'm not going to be silent.",
@@ -292,7 +292,6 @@ def evaluate(model, criterion, criterion_st, ap, current_step, epoch, c):
                 mel_input = data[2]
                 mel_lengths = data[3]
                 stop_targets = data[4]
-                timers = data[6]
 
                 # set stop targets view, we predict a single stop token per r frames prediction
                 stop_targets = stop_targets.view(text_input.shape[0],
@@ -307,11 +306,12 @@ def evaluate(model, criterion, criterion_st, ap, current_step, epoch, c):
                     mel_lengths = mel_lengths.cuda()
                     # linear_input = linear_input.cuda() if c.model == "Tacotron" else None
                     stop_targets = stop_targets.cuda()
-                    timers = timers.cuda()
 
                 # forward pass
-                decoder_output, postnet_output, alignments, stop_tokens =\
-                    model.forward(text_input, text_lengths, mel_input, timers)
+                decoder_output, postnet_output, alignments, \
+                stop_tokens, token_scores = model.forward(text_input,
+                                                          text_lengths,
+                                                          mel_input)
 
                 # loss computation
                 stop_loss = criterion_st(stop_tokens, stop_targets) if c.stopnet else torch.zeros(1)
@@ -327,7 +327,9 @@ def evaluate(model, criterion, criterion_st, ap, current_step, epoch, c):
                         postnet_loss = criterion(postnet_output, mel_input)
                     else:
                         postnet_loss = criterion(postnet_output, mel_input)
-                loss = decoder_loss + postnet_loss + stop_loss
+                style_token_loss = 1e-4 * token_scores.norm(1)
+                loss = decoder_loss + postnet_loss + \
+                       stop_loss + style_token_loss
 
                 step_time = time.time() - start_time
                 epoch_time += step_time
@@ -351,6 +353,7 @@ def evaluate(model, criterion, criterion_st, ap, current_step, epoch, c):
                 avg_postnet_loss += float(postnet_loss.item())
                 avg_decoder_loss += float(decoder_loss.item())
                 avg_stop_loss += stop_loss.item()
+                avg_token_loss += float(style_token_loss.item())
 
             if args.rank == 0:
                 # Diagnostic visualizations
@@ -381,11 +384,13 @@ def evaluate(model, criterion, criterion_st, ap, current_step, epoch, c):
                 avg_postnet_loss /= (num_iter + 1)
                 avg_decoder_loss /= (num_iter + 1)
                 avg_stop_loss /= (num_iter + 1)
+                avg_token_loss /= (num_iter + 1)
 
                 # Plot Validation Stats
                 epoch_stats = {"loss_postnet": avg_postnet_loss,
                             "loss_decoder": avg_decoder_loss,
-                            "stop_loss": avg_stop_loss}
+                            "stop_loss": avg_stop_loss,
+                            "token_loss": avg_token_loss}
                 tb_logger.tb_eval_stats(current_step, epoch_stats)
 
     if args.rank == 0 and epoch > c.test_delay_epochs:

@@ -48,7 +48,7 @@ class Tacotron(nn.Module):
         mask = sequence_mask(text_lengths).to(characters.device)
         inputs = self.embedding(characters)
         encoder_outputs = self.encoder(inputs)
-        style_encoding = self.global_style_tokens(mel_specs)
+        style_encoding, token_scores = self.global_style_tokens(mel_specs)
         style_encoding = style_encoding.expand(-1, encoder_outputs.size(1),
                                                -1)
 
@@ -62,13 +62,14 @@ class Tacotron(nn.Module):
         mel_outputs_postnet = self.postnet(mel_outputs)
         mel_outputs, mel_outputs_postnet, alignments = self.shape_outputs(
             mel_outputs, mel_outputs_postnet, alignments)
-        return mel_outputs, mel_outputs_postnet, alignments, stop_tokens
+        return mel_outputs, mel_outputs_postnet, alignments, \
+               stop_tokens, token_scores
 
-    def inference(self, characters):
+    def inference(self, characters, token_scores):
         B = characters.size(0)
         inputs = self.embedding(characters)
         encoder_outputs = self.encoder(inputs)
-        style_encoding = torch.zeros((1, 1, 64)).cuda(non_blocking=True)
+        style_encoding = self.global_style_tokens.inference(token_scores)
         style_encoding = style_encoding.expand(-1, encoder_outputs.size(1),
                                                -1)
 
@@ -87,3 +88,7 @@ class Tacotron(nn.Module):
         # linear_outputs = self.postnet(mel_outputs)
         # linear_outputs = self.last_linear(linear_outputs)
         # return mel_outputs, linear_outputs, alignments, stop_tokens
+
+    def get_token_scores(self, mel_specs):
+        style_encoding, token_scores = self.global_style_tokens(mel_specs)
+        return token_scores

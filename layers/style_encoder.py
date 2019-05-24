@@ -19,13 +19,17 @@ class GlobalStyleTokens(nn.Module):
         self.style_token_layer = StyleTokenLayer(num_style_tokens,
                                                  token_dim,
                                                  prosody_encoding_dim,
-                                                 scoring_function)
+                                                 scoring_function,
+                                                 use_separate_keys)
 
     def forward(self, inputs):
         enc_out = self.encoder(inputs)
-        style_embed = self.style_token_layer(enc_out)
+        style_embed, token_scores = self.style_token_layer(enc_out)
 
-        return style_embed
+        return style_embed, token_scores
+
+    def inference(self, token_scores):
+        return self.style_token_layer.inference(token_scores)
 
 
 class ReferenceEncoder(nn.Module):
@@ -121,9 +125,15 @@ class StyleTokenLayer(nn.Module):
         tokens = self.shape_for_attention(self.style_tokens, batch_size)
         keys = self.shape_for_attention(self.keys, batch_size)
         # tokens: 3D tensor [batch_size, num tokens, token embedding size]
-        style_embed = self.attention(prosody_encoding, tokens, keys)
+        style_embed, token_scores = self.attention(prosody_encoding,
+                                                   tokens, keys)
+        return style_embed, token_scores
 
-        return style_embed
+    def inference(self, token_scores):
+        batch_size = token_scores.size(0)
+        tokens = self.shape_for_attention(self.style_tokens, batch_size)
+        token_scores.unsqueeze(1)
+        return self.attention.inference(tokens, token_scores)
 
     def shape_for_attention(self, tokens, batch_size):
         """Shapes tokens and keys."""
@@ -150,7 +160,8 @@ class StyleTokenLayer(nn.Module):
 #                                             text_encoding_dim,
 #                                             bias=False)
 #         self.W_token = nn.Linear(token_dim, text_encoding_dim, bias=False)
-#         self.W_out = nn.Linear(text_encoding_dim, text_encoding_dim, bias=False)
+#         self.W_out = nn.Linear(text_encoding_dim, text_encoding_dim,
+#         bias=False)
 #
 #     def forward(self, prosody_encoding, tokens):
 #         prosody_encoding = self.W_prosody_encoding(prosody_encoding)
@@ -197,6 +208,18 @@ class SparseTokenAttention(nn.Module):
         self.W_out = nn.Linear(token_dim, token_dim)
 
     def forward(self, prosody_encoding, tokens, keys=None):
+        scores = self.get_scores(prosody_encoding, tokens, keys)
+        return self.inference(tokens, scores), scores
+
+    def inference(self, tokens, scores):
+        # out = score * V
+        out = torch.matmul(scores, tokens)
+        # out: 3D tensor [batch size, 1, token dim]
+        out = self.W_out(out)
+
+        return out
+
+    def get_scores(self, prosody_encoding, tokens, keys=None):
         prosody_encoding = self.W_prosody_encoding(prosody_encoding)
         # prosody_encoding: 3D Tensor [batch_size, 1, token_dim]
         # tokens: 3D Tensor [batch_size, num tokens, token_dim]
@@ -207,12 +230,4 @@ class SparseTokenAttention(nn.Module):
         # scores: 3D tensor [batch size, 1, num tokens]
         # scores = scores / (self.token_dim ** 0.5)
         scores = self.scoring_function(scores)
-
-        # out = score * V
-        out = torch.matmul(scores, tokens)
-        # out: 3D tensor [batch size, 1, token dim]
-        out = self.W_out(out)
-
-        return out
-
-
+        return scores

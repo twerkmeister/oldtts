@@ -76,7 +76,6 @@ class MyDataset(Dataset):
             print(" | > Use phonemes: {}".format(self.use_phonemes))
             if use_phonemes:
                 print("   | > phoneme language: {}".format(phoneme_language))
-            print(" | > Cached dataset: {}".format(self.cached))
             print(" | > Number of instances : {}".format(len(self.items)))
         self.sort_items()
 
@@ -224,19 +223,6 @@ class MyDataset(Dataset):
             # linear = linear.transpose(0, 2, 1)
             mel = mel.transpose(0, 2, 1)
 
-            relative_timer = [np.linspace(0.1, np.pi - 0.1, text_lenghts[idx])
-                              for idx in ids_sorted_decreasing]
-            relative_timer = prepare_data(relative_timer)
-            absolute_timer = [np.arange(0.9, text_lenghts[idx]) / 10.0
-                              for idx in ids_sorted_decreasing]
-            absolute_timer = prepare_data(absolute_timer)
-
-            timers = np.stack((np.sin(relative_timer),
-                               np.sin(absolute_timer),
-                               np.cos(relative_timer),
-                               np.cos(absolute_timer)),
-                              axis=2)
-
             # convert things to pytorch
             text_lenghts_t = torch.LongTensor(text_lenghts_t)
             text = torch.LongTensor(text)
@@ -244,10 +230,9 @@ class MyDataset(Dataset):
             mel = torch.FloatTensor(mel).contiguous()
             mel_lengths = torch.LongTensor(mel_lengths)
             stop_targets = torch.FloatTensor(stop_targets)
-            timers = torch.FloatTensor(timers).contiguous()
 
             return text, text_lenghts_t, mel, mel_lengths, stop_targets, \
-                   item_idxs, timers
+                   item_idxs
 
         raise TypeError(("batch must contain tensors, numbers, dicts or lists;\
                          found {}".format(type(batch[0]))))
