@@ -29,7 +29,7 @@ class TestTTSDataset(unittest.TestCase):
         self.ap = AudioProcessor(**c.audio)
 
     def _create_dataloader(self, batch_size, r, bgs):
-        dataset = TTSDataset.MyDataset(
+        dataset = TTSDataset.TTSDataset(
             c.data_path,
             'metadata.csv',
             r,
