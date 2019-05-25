@@ -1,7 +1,5 @@
 import argparse
-import importlib
 import os
-import shutil
 import sys
 import time
 import traceback
@@ -11,10 +9,9 @@ import torch
 import torch.nn as nn
 from tensorboardX import SummaryWriter
 from torch import optim
-from torch.utils.data import DataLoader
 
-from datasets.TTSDataset import MyDataset
-from distribute import (DistributedSampler, apply_gradient_allreduce,
+from datasets.loading import setup
+from distribute import (apply_gradient_allreduce,
                         init_distributed, reduce_tensor)
 from layers.losses import L1LossMasked, MSELossMasked
 from utils.audio import AudioProcessor
@@ -38,48 +35,10 @@ print(" > Using CUDA: ", use_cuda)
 print(" > Number of GPUs: ", num_gpus)
 
 
-def preprocessor_factory(dataset_type):
-    preprocessor_module = importlib.import_module('datasets.preprocess')
-    return getattr(preprocessor_module, dataset_type.lower())
-
-
-def setup_loader(ap, c, is_val=False, verbose=False):
-    if is_val and not c.run_eval:
-        loader = None
-    else:
-        dataset = MyDataset(
-            c.data_path,
-            c.meta_file_val if is_val else c.meta_file_train,
-            c.r,
-            c.text_cleaner,
-            preprocessor=preprocessor_factory(c.dataset),
-            ap=ap,
-            batch_group_size=0 if is_val else c.batch_group_size * c.batch_size,
-            min_seq_len=0 if is_val else c.min_seq_len,
-            max_seq_len=float("inf") if is_val else c.max_seq_len,
-            phoneme_cache_path=c.phoneme_cache_path,
-            use_phonemes=c.use_phonemes,
-            phoneme_language=c.phoneme_language,
-            enable_eos_bos=c.enable_eos_bos_chars,
-            verbose=verbose)
-        sampler = DistributedSampler(dataset) if num_gpus > 1 else None
-        loader = DataLoader(
-            dataset,
-            batch_size=c.eval_batch_size if is_val else c.batch_size,
-            shuffle=False,
-            collate_fn=dataset.collate_fn,
-            drop_last=False,
-            sampler=sampler,
-            num_workers=c.num_val_loader_workers
-            if is_val else c.num_loader_workers,
-            pin_memory=False)
-    return loader
-
-
 def train(model, criterion, criterion_st, optimizer, optimizer_st, scheduler,
           ap, epoch, c):
     is_first_epoch = epoch == 0
-    data_loader = setup_loader(ap, c, is_val=False, verbose=is_first_epoch)
+    data_loader = setup(c, ap, num_gpus, verbose=is_first_epoch)
     model.train()
     epoch_time = 0
     avg_postnet_loss = 0
@@ -266,7 +225,8 @@ def train(model, criterion, criterion_st, optimizer, optimizer_st, scheduler,
 
 
 def evaluate(model, criterion, criterion_st, ap, current_step, epoch, c):
-    data_loader = setup_loader(ap, c, is_val=True)
+    """Evaluate the model based on validation set."""
+    data_loader = setup(c, ap, num_gpus, is_val=True)
     model.eval()
     epoch_time = 0
     avg_postnet_loss = 0
@@ -274,124 +234,129 @@ def evaluate(model, criterion, criterion_st, ap, current_step, epoch, c):
     avg_stop_loss = 0
     avg_token_loss = 0
     print("\n > Validation")
+
+    with torch.no_grad():
+        for num_iter, data in enumerate(data_loader):
+            start_time = time.time()
+
+            # setup input data
+            text_input = data[0]
+            text_lengths = data[1]
+            # linear_input = data[2] if c.model == "Tacotron" else None
+            mel_input = data[2]
+            mel_lengths = data[3]
+            stop_targets = data[4]
+
+            # set stop targets view, we predict a single stop token per r frames prediction
+            stop_targets = stop_targets.view(text_input.shape[0],
+                                             stop_targets.size(1) // c.r,
+                                             -1)
+            stop_targets = (stop_targets.sum(2) > 0.0).unsqueeze(2).float().squeeze(2)
+
+            # dispatch data to GPU
+            if use_cuda:
+                text_input = text_input.cuda()
+                mel_input = mel_input.cuda()
+                mel_lengths = mel_lengths.cuda()
+                # linear_input = linear_input.cuda() if c.model == "Tacotron" else None
+                stop_targets = stop_targets.cuda()
+
+            # forward pass
+            decoder_output, postnet_output, alignments, \
+            stop_tokens, token_scores = model.forward(text_input,
+                                                      text_lengths,
+                                                      mel_input)
+
+            # loss computation
+            stop_loss = criterion_st(stop_tokens, stop_targets) if c.stopnet else torch.zeros(1)
+            if c.loss_masking:
+                decoder_loss = criterion(decoder_output, mel_input, mel_lengths)
+                if c.model == "Tacotron":
+                    postnet_loss = criterion(postnet_output, mel_input, mel_lengths)
+                else:
+                    postnet_loss = criterion(postnet_output, mel_input, mel_lengths)
+            else:
+                decoder_loss = criterion(decoder_output, mel_input)
+                if c.model == "Tacotron":
+                    postnet_loss = criterion(postnet_output, mel_input)
+                else:
+                    postnet_loss = criterion(postnet_output, mel_input)
+            style_token_loss = 1e-4 * token_scores.norm(1)
+            loss = decoder_loss + postnet_loss + \
+                   stop_loss + style_token_loss
+
+            step_time = time.time() - start_time
+            epoch_time += step_time
+
+            if num_iter % c.print_step == 0:
+                print(
+                    "   | > TotalLoss: {:.5f}   PostnetLoss: {:.5f}   DecoderLoss:{:.5f}  "
+                    "StopLoss: {:.5f}  ".format(loss.item(),
+                                                postnet_loss.item(),
+                                                decoder_loss.item(),
+                                                stop_loss.item()),
+                    flush=True)
+
+            # aggregate losses from processes
+            if num_gpus > 1:
+                postnet_loss = reduce_tensor(postnet_loss.data, num_gpus)
+                decoder_loss = reduce_tensor(decoder_loss.data, num_gpus)
+                if c.stopnet:
+                    stop_loss = reduce_tensor(stop_loss.data, num_gpus)
+
+            avg_postnet_loss += float(postnet_loss.item())
+            avg_decoder_loss += float(decoder_loss.item())
+            avg_stop_loss += stop_loss.item()
+            avg_token_loss += float(style_token_loss.item())
+
+        if args.rank == 0:
+            # Diagnostic visualizations
+            idx = np.random.randint(mel_input.shape[0])
+            postnet_spec = postnet_output[idx].data.cpu().numpy()
+            decoder_spec = decoder_output[idx].data.cpu().numpy()
+
+            gt_spec = mel_input[idx].data.cpu().numpy()
+            align_img = alignments[idx].data.cpu().numpy()
+
+            eval_figures = {
+                "decoder_spec": plot_spectrogram(decoder_spec, ap),
+                "post_net": plot_spectrogram(postnet_spec, ap),
+                "ground_truth": plot_spectrogram(gt_spec, ap),
+                "alignment": plot_alignment(align_img)
+            }
+            tb_logger.tb_eval_figures(current_step, eval_figures)
+
+            # Sample audio
+            eval_audio = ap.inv_mel_spectrogram(postnet_spec.T)
+            eval_decoder_audio = ap.inv_mel_spectrogram(decoder_spec.T)
+            tb_logger.tb_eval_audios(current_step,
+                                     {"ValAudio": eval_audio,
+                                      "ValDecAudio": eval_decoder_audio},
+                                     c.audio["sample_rate"])
+
+            # compute average losses
+            avg_postnet_loss /= (num_iter + 1)
+            avg_decoder_loss /= (num_iter + 1)
+            avg_stop_loss /= (num_iter + 1)
+            avg_token_loss /= (num_iter + 1)
+
+            # Plot Validation Stats
+            epoch_stats = {"loss_postnet": avg_postnet_loss,
+                        "loss_decoder": avg_decoder_loss,
+                        "stop_loss": avg_stop_loss,
+                        "token_loss": avg_token_loss}
+            tb_logger.tb_eval_stats(current_step, epoch_stats)
+        return avg_postnet_loss
+
+
+def test(model, ap, current_step, epoch, c):
     test_sentences = [
-        "It took me quite a long time to develop a voice, and now that I have it I'm not going to be silent.",
+        "It took me quite a long time to develop a voice, and now that I have "
+        "it I'm not going to be silent.",
         "Be a voice, not an echo.",
         "I'm sorry Dave. I'm afraid I can't do that.",
         "This cake is great. It's so delicious and moist."
     ]
-    with torch.no_grad():
-        if data_loader is not None:
-            for num_iter, data in enumerate(data_loader):
-                start_time = time.time()
-
-                # setup input data
-                text_input = data[0]
-                text_lengths = data[1]
-                # linear_input = data[2] if c.model == "Tacotron" else None
-                mel_input = data[2]
-                mel_lengths = data[3]
-                stop_targets = data[4]
-
-                # set stop targets view, we predict a single stop token per r frames prediction
-                stop_targets = stop_targets.view(text_input.shape[0],
-                                                 stop_targets.size(1) // c.r,
-                                                 -1)
-                stop_targets = (stop_targets.sum(2) > 0.0).unsqueeze(2).float().squeeze(2)
-
-                # dispatch data to GPU
-                if use_cuda:
-                    text_input = text_input.cuda()
-                    mel_input = mel_input.cuda()
-                    mel_lengths = mel_lengths.cuda()
-                    # linear_input = linear_input.cuda() if c.model == "Tacotron" else None
-                    stop_targets = stop_targets.cuda()
-
-                # forward pass
-                decoder_output, postnet_output, alignments, \
-                stop_tokens, token_scores = model.forward(text_input,
-                                                          text_lengths,
-                                                          mel_input)
-
-                # loss computation
-                stop_loss = criterion_st(stop_tokens, stop_targets) if c.stopnet else torch.zeros(1)
-                if c.loss_masking:
-                    decoder_loss = criterion(decoder_output, mel_input, mel_lengths)
-                    if c.model == "Tacotron":
-                        postnet_loss = criterion(postnet_output, mel_input, mel_lengths)
-                    else:
-                        postnet_loss = criterion(postnet_output, mel_input, mel_lengths)
-                else:
-                    decoder_loss = criterion(decoder_output, mel_input)
-                    if c.model == "Tacotron":
-                        postnet_loss = criterion(postnet_output, mel_input)
-                    else:
-                        postnet_loss = criterion(postnet_output, mel_input)
-                style_token_loss = 1e-4 * token_scores.norm(1)
-                loss = decoder_loss + postnet_loss + \
-                       stop_loss + style_token_loss
-
-                step_time = time.time() - start_time
-                epoch_time += step_time
-
-                if num_iter % c.print_step == 0:
-                    print(
-                        "   | > TotalLoss: {:.5f}   PostnetLoss: {:.5f}   DecoderLoss:{:.5f}  "
-                        "StopLoss: {:.5f}  ".format(loss.item(),
-                                                    postnet_loss.item(),
-                                                    decoder_loss.item(),
-                                                    stop_loss.item()),
-                        flush=True)
-
-                # aggregate losses from processes
-                if num_gpus > 1:
-                    postnet_loss = reduce_tensor(postnet_loss.data, num_gpus)
-                    decoder_loss = reduce_tensor(decoder_loss.data, num_gpus)
-                    if c.stopnet:
-                        stop_loss = reduce_tensor(stop_loss.data, num_gpus)
-
-                avg_postnet_loss += float(postnet_loss.item())
-                avg_decoder_loss += float(decoder_loss.item())
-                avg_stop_loss += stop_loss.item()
-                avg_token_loss += float(style_token_loss.item())
-
-            if args.rank == 0:
-                # Diagnostic visualizations
-                idx = np.random.randint(mel_input.shape[0])
-                postnet_spec = postnet_output[idx].data.cpu().numpy()
-                decoder_spec = decoder_output[idx].data.cpu().numpy()
-
-                gt_spec = mel_input[idx].data.cpu().numpy()
-                align_img = alignments[idx].data.cpu().numpy()
-
-                eval_figures = {
-                    "decoder_spec": plot_spectrogram(decoder_spec, ap),
-                    "post_net": plot_spectrogram(postnet_spec, ap),
-                    "ground_truth": plot_spectrogram(gt_spec, ap),
-                    "alignment": plot_alignment(align_img)
-                }
-                tb_logger.tb_eval_figures(current_step, eval_figures)
-
-                # Sample audio
-                eval_audio = ap.inv_mel_spectrogram(postnet_spec.T)
-                eval_decoder_audio = ap.inv_mel_spectrogram(decoder_spec.T)
-                tb_logger.tb_eval_audios(current_step,
-                                         {"ValAudio": eval_audio,
-                                          "ValDecAudio": eval_decoder_audio},
-                                         c.audio["sample_rate"])
-
-                # compute average losses
-                avg_postnet_loss /= (num_iter + 1)
-                avg_decoder_loss /= (num_iter + 1)
-                avg_stop_loss /= (num_iter + 1)
-                avg_token_loss /= (num_iter + 1)
-
-                # Plot Validation Stats
-                epoch_stats = {"loss_postnet": avg_postnet_loss,
-                            "loss_decoder": avg_decoder_loss,
-                            "stop_loss": avg_stop_loss,
-                            "token_loss": avg_token_loss}
-                tb_logger.tb_eval_stats(current_step, epoch_stats)
 
     if args.rank == 0 and epoch > c.test_delay_epochs:
         # test sentences
@@ -415,7 +380,6 @@ def evaluate(model, criterion, criterion_st, ap, current_step, epoch, c):
                 traceback.print_exc()
         tb_logger.tb_test_audios(current_step, test_audios, c.audio['sample_rate'])
         tb_logger.tb_test_figures(current_step, test_figures)
-    return avg_postnet_loss
 
 
 def main(args, c):
@@ -495,15 +459,15 @@ def main(args, c):
         train_loss, current_step = train(model, criterion, criterion_st,
                                          optimizer, optimizer_st, scheduler,
                                          ap, epoch, c)
-        val_loss = evaluate(model, criterion, criterion_st,
-                            ap, current_step, epoch, c)
-        print(
-            " | > Training Loss: {:.5f}   Validation Loss: {:.5f}".format(
-                train_loss, val_loss),
-            flush=True)
+        print(" | > Training Loss: {:.5f}".format(train_loss), flush=True)
         target_loss = train_loss
+
         if c.run_eval:
+            val_loss = evaluate(model, criterion, criterion_st,
+                                ap, current_step, epoch, c)
+            print(" | > Validation Loss: {:.5f}".format(val_loss), flush=True)
             target_loss = val_loss
+
         best_loss = save_best_model(model, optimizer, target_loss, best_loss,
                                     OUT_PATH, current_step, epoch)
 

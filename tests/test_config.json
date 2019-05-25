@@ -32,7 +32,6 @@
     "mk": 1.0,
     "priority_freq": false,
     "num_loader_workers": 4,
-    "memory_size": 5,
     "windowing": false,            // Enables attention windowing. Used only in eval mode.
     "memory_size": 5,              // ONLY TACOTRON - memory queue size used to queue network predictions to feed autoregressive connection. Useful if r < 5.
     "attention_norm": "softmax",   // softmax or sigmoid. Suggested to use softmax for Tacotron2 and sigmoid for Tacotron.
@@ -50,7 +49,6 @@
     "prosody_encoding_dim": 128,
     "scoring_func_name": "tanh",
     "use_separate_keys": true,
-
     "save_step": 200,
     "data_path": "/home/erogol/Data/LJSpeech-1.1/",
     "output_path": "result",
