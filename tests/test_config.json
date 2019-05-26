@@ -1,4 +1,5 @@
     {
+    "run_name": "test",
     "audio":{
         "audio_processor": "audio",     // to use dictate different audio processors, if available.
         "num_mels": 80,         // size of the mel spec frame.
@@ -19,16 +20,15 @@
         "mel_fmax": 7600,        // maximum freq level for mel-spec. Tune for dataset!!
         "do_trim_silence": false
     },
+    "model": "Tacotron",
     "hidden_size": 128,
     "embedding_size": 256,
-    "text_cleaner": "english_cleaners",
-
     "epochs": 2000,
     "lr": 0.003,
     "lr_patience": 5,
     "lr_decay": 0.5,
     "batch_size": 2,
-    "r": 5,
+    "r": 1,
     "mk": 1.0,
     "priority_freq": false,
     "num_loader_workers": 4,
@@ -45,12 +45,30 @@
     "stopnet": true,               // Train stopnet predicting the end of synthesis.
     "separate_stopnet": false,     // Train stopnet seperately if 'stopnet==true'. It prevents stopnet loss to influence the rest of the model. It causes a better model, but it trains SLOWER.
     "num_style_tokens": 128,
+    "warmup_steps": 4000,
     "style_token_dim": 64,
     "prosody_encoding_dim": 128,
     "scoring_func_name": "tanh",
     "use_separate_keys": true,
+    "use_phonemes": true,
+    "batch_group_size": 8,
+    "datasets": [{
+        "data_path": "/Users/thomas/workspace/data/cv-de",
+        "meta_file": "train_split.tsv",
+        "type": "common_voice",
+        "phoneme_cache_path": "mozilla_us_phonemes",
+        "phoneme_language": "de",
+        "text_cleaner": "phoneme_cleaners"
+    }],
+    "eval_datasets": [{
+        "data_path": "/Users/thomas/workspace/data/cv-de",
+        "meta_file": "dev_split.tsv",
+        "type": "common_voice",
+        "phoneme_cache_path": "mozilla_us_phonemes",
+        "phoneme_language": "de",
+        "text_cleaner": "phoneme_cleaners"
+    }],
     "save_step": 200,
-    "data_path": "/home/erogol/Data/LJSpeech-1.1/",
     "output_path": "result",
     "min_seq_len": 0,
     "max_seq_len": 300,

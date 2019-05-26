@@ -47,7 +47,7 @@ def train(model, criterion, criterion_st, optimizer, optimizer_st, scheduler,
     avg_step_time = 0
     avg_token_loss = 0
     print("\n > Epoch {}/{}".format(epoch, c.epochs), flush=True)
-    batch_n_iter = int(len(data_loader.dataset) / (c.batch_size * num_gpus))
+    batch_n_iter = int(len(data_loader.dataset) / (c.batch_size * max(1, num_gpus)))
     for num_iter, data in enumerate(data_loader):
         start_time = time.time()
 
@@ -102,7 +102,7 @@ def train(model, criterion, criterion_st, optimizer, optimizer_st, scheduler,
                 postnet_loss = criterion(postnet_output, mel_input)
 
         # style_token_loss = 1e-5 * model.global_style_tokens.style_token_layer.style_tokens.norm(1)
-        style_token_loss = 1e-4 * token_scores.norm(1)
+        style_token_loss = c.token_score_reg * token_scores.norm(1)
         loss = decoder_loss + postnet_loss + style_token_loss
         if not c.separate_stopnet and c.stopnet:
             loss += stop_loss
@@ -281,7 +281,7 @@ def evaluate(model, criterion, criterion_st, ap, current_step, epoch, c):
                     postnet_loss = criterion(postnet_output, mel_input)
                 else:
                     postnet_loss = criterion(postnet_output, mel_input)
-            style_token_loss = 1e-4 * token_scores.norm(1)
+            style_token_loss = c.token_score_reg * token_scores.norm(1)
             loss = decoder_loss + postnet_loss + \
                    stop_loss + style_token_loss
 

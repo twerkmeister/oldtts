@@ -259,7 +259,7 @@ class Attention(nn.Module):
 
 class Postnet(nn.Module):
     def __init__(self, mel_dim, num_convs=5, num_feature_maps=512, dropout=0.5):
-        super(Postnet, self).__init__()
+        super().__init__()
         self.convolutions = nn.ModuleList()
         self.convolutions.append(
             ConvBNBlock(mel_dim, num_feature_maps,
