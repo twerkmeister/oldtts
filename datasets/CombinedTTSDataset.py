@@ -28,8 +28,8 @@ class CombinedTTSDataset(Dataset):
         self.batch_group_size = batch_group_size
         self.min_seq_len = min_seq_len
         self.max_seq_len = max_seq_len
-        self.index = self.generate_index()
         self.verbose = verbose
+        self.index = self.generate_index()
 
     def _shuffle_batch_groups(self, length_idx):
         """Shuffles the data in local batch groups."""
@@ -45,9 +45,9 @@ class CombinedTTSDataset(Dataset):
 
     def _filter_lengths(self, index, text_lengths):
         """Filters out examples outside min and max seq len."""
-        joined = zip(text_lengths, index)
+        joined = zip(index, text_lengths)
         joined = [x for x in joined
-                  if self.min_seq_len < x[0] < self.max_seq_len]
+                  if self.min_seq_len < x[1] < self.max_seq_len]
         index, text_lengths = zip(*joined)
         return index, text_lengths
 

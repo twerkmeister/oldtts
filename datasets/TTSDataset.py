@@ -103,7 +103,7 @@ class TTSDataset(Dataset):
         linear = self.ap.spectrogram(wav).astype('float32')
 
         if self.use_phonemes:
-            text = self.load_phoneme_sequence(wav_file, text)
+            text = self.load_or_generate_phoneme_sequence(wav_file, text)
         else:
             text = np.asarray(
                 text_to_sequence(text, [self.cleaners]), dtype=np.int32)

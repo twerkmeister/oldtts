@@ -9,7 +9,7 @@ from distribute import DistributedSampler
 
 def preprocessor_factory(dataset_type):
     """Returns the preprocessor function for the given dataset type name."""
-    preprocessor_module = importlib.import_module('.preprocess')
+    preprocessor_module = importlib.import_module('datasets.preprocess')
     return getattr(preprocessor_module, dataset_type.lower())
 
 
@@ -35,7 +35,8 @@ def _setup_dataset(ap, conf, dataset_confs, is_val=False, verbose=False):
     combined_dataset = CombinedTTSDataset(single_datasets,
                                           batch_group_size,
                                           conf.min_seq_len,
-                                          conf.max_seq_len)
+                                          conf.max_seq_len,
+                                          verbose)
 
     return combined_dataset
 
@@ -59,7 +60,7 @@ def _setup_loader(conf, dataset, num_gpus, is_val=False):
 
 
 def setup(conf, ap, num_gpus, is_val=False, verbose=False):
-    dataset_confs = conf["eval_datasets"] if is_val else conf["train_datasets"]
+    dataset_confs = conf["eval_datasets"] if is_val else conf["datasets"]
     dataset = _setup_dataset(ap, conf, dataset_confs, is_val, verbose)
     loader = _setup_loader(conf, dataset, num_gpus, is_val)
     return loader
