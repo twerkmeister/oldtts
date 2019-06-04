@@ -12,6 +12,7 @@ class TTSDataset(Dataset):
                  text_cleaner,
                  ap,
                  preprocessor,
+                 speaker_id,
                  use_phonemes=True,
                  phoneme_cache_path=None,
                  phoneme_language="en-us",
@@ -27,6 +28,7 @@ class TTSDataset(Dataset):
             preprocessor (dataset.preprocess.Class): preprocessor for the
             dataset.
                 Create your own if you need to run a new dataset.
+            speaker_id (int): the id of the speaker of the dataset
             use_phonemes (bool): (true) if true, text converted to phonemes.
             phoneme_cache_path (str): path to cache phoneme features. 
             phoneme_language (str): one the languages from 
@@ -42,6 +44,7 @@ class TTSDataset(Dataset):
         self.cleaners = text_cleaner
         self.ap = ap
         self.use_phonemes = use_phonemes
+        self.speaker_id = speaker_id
         self.phoneme_cache_path = phoneme_cache_path
         self.phoneme_language = phoneme_language
         self.enable_eos_bos = enable_eos_bos
@@ -55,9 +58,11 @@ class TTSDataset(Dataset):
 
     def print_stats(self):
         lengths = np.array([len(ins[0]) for ins in self.items])
-        print("Dataset at {}, use phonemes: {}, lang: {}, num instances: {}, "
-              "max text len: {}, min text len: {}, avg text len: {}".format(
+        print("Dataset at {}, speaker_id: {} use phonemes: {}, lang: {}, "
+              "num instances: {}, max text len: {}, min text len: {}, "
+              "avg text len: {}".format(
                 os.path.join(self.root_path, self.meta_file),
+                self.speaker_id,
                 self.use_phonemes,
                 self.phoneme_language,
                 len(self.items),
@@ -115,6 +120,7 @@ class TTSDataset(Dataset):
             'text': text,
             'mel': mel,
             # 'linear': linear,
+            'speaker_id': self.speaker_id,
             'item_idx': self.items[idx][1]
         }
         return sample

@@ -23,6 +23,7 @@ def _setup_dataset(ap, conf, dataset_confs, is_val=False, verbose=False):
                 ds['meta_file'],
                 ds['text_cleaner'],
                 preprocessor=preprocessor_factory(ds['type']),
+                speaker_id=ds['speaker_id'],
                 ap=ap,
                 phoneme_cache_path=ds.get('phoneme_cache_path', None),
                 use_phonemes=conf.use_phonemes,

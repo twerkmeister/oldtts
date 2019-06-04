@@ -52,13 +52,17 @@
     "use_separate_keys": true,
     "use_phonemes": true,
     "batch_group_size": 8,
+    "speaker_embedding_dim": 64,
+    "postnet_num_feature_maps": 256,
+    "postnet_dropout": 0.10,
     "datasets": [{
         "data_path": "/Users/thomas/workspace/data/cv-de",
         "meta_file": "train_split.tsv",
         "type": "common_voice",
         "phoneme_cache_path": "mozilla_us_phonemes",
         "phoneme_language": "de",
-        "text_cleaner": "phoneme_cleaners"
+        "text_cleaner": "phoneme_cleaners",
+        "speaker_id": 0
     }],
     "eval_datasets": [{
         "data_path": "/Users/thomas/workspace/data/cv-de",
@@ -66,7 +70,8 @@
         "type": "common_voice",
         "phoneme_cache_path": "mozilla_us_phonemes",
         "phoneme_language": "de",
-        "text_cleaner": "phoneme_cleaners"
+        "text_cleaner": "phoneme_cleaners",
+        "speaker_id": 0
     }],
     "save_step": 200,
     "output_path": "result",

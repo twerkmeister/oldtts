@@ -30,6 +30,14 @@ def plot_spectrogram(linear_output, audio):
     return fig
 
 
+def plot_like_spectrogram(spec_like):
+    fig = plt.figure(figsize=(16, 10))
+    plt.imshow(spec_like.T, aspect="auto", origin="lower")
+    plt.colorbar()
+    plt.tight_layout()
+    return fig
+
+
 def visualize(alignment, spectrogram_postnet, stop_tokens, text, hop_length, CONFIG, spectrogram=None, output_path=None):
     if spectrogram is not None:
         num_plot = 4

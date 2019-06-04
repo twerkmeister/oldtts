@@ -116,12 +116,14 @@ def save_checkpoint(model, optimizer, optimizer_st, model_loss, out_path,
     state = {
         'model': new_state_dict,
         'optimizer': optimizer.state_dict(),
-        'optimizer_st': optimizer_st.state_dict(),
         'step': current_step,
         'epoch': epoch,
         'linear_loss': model_loss,
         'date': datetime.date.today().strftime("%B %d, %Y")
     }
+    if optimizer_st is not None:
+        state['optimizer_st'] = optimizer_st.state_dict()
+
     torch.save(state, checkpoint_path)
 
 
@@ -252,3 +254,9 @@ def setup_model(c):
     model_class = getattr(module, c.model)
     model = model_class(num_chars, c)
     return model
+
+
+def get_max_speaker_id(c):
+    """Returns the max speaker id among the datasets."""
+    speaker_ids = [ds["speaker_id"] for ds in c.datasets]
+    return max(speaker_ids)

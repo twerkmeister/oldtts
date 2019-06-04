@@ -31,8 +31,11 @@ def make_collate_func(outputs_per_step):
 
             mel = [batch[idx]['mel'] for idx in ids_sorted_decreasing]
             # linear = [batch[idx]['linear'] for idx in ids_sorted_decreasing]
+            speaker_ids = [batch[idx]['speaker_id']
+                           for idx in ids_sorted_decreasing]
 
             mel_lengths = [m.shape[1] + 1 for m in mel]  # +1 for zero-frame
+
 
             # compute 'stop token' targets
             stop_targets = [
@@ -62,9 +65,10 @@ def make_collate_func(outputs_per_step):
             mel = torch.FloatTensor(mel).contiguous()
             mel_lengths = torch.LongTensor(mel_lengths)
             stop_targets = torch.FloatTensor(stop_targets)
+            speaker_ids = torch.LongTensor(speaker_ids)
 
             return text, text_lenghts, mel, mel_lengths, stop_targets, \
-                   item_idxs
+                speaker_ids, item_idxs
 
         raise TypeError(("batch must contain tensors, numbers, dicts or lists;\
                          found {}".format(type(batch[0]))))

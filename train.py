@@ -20,11 +20,12 @@ from utils.generic_utils import (NoamLR, check_update, count_parameters,
                                  load_config, lr_decay,
                                  remove_experiment_folder, save_best_model,
                                  save_checkpoint, sequence_mask, weight_decay,
-                                 set_init_dict, copy_config_file, setup_model)
+                                 set_init_dict, copy_config_file, setup_model,
+                                 get_max_speaker_id)
 from utils.logger import Logger
 from utils.synthesis import synthesis
 from utils.text.symbols import phonemes, symbols
-from utils.visual import plot_alignment, plot_spectrogram
+from utils.visual import plot_alignment, plot_spectrogram, plot_like_spectrogram
 
 torch.backends.cudnn.enabled = True
 torch.backends.cudnn.benchmark = False
@@ -57,6 +58,7 @@ def train(model, criterion, criterion_st, optimizer, optimizer_st, scheduler,
         mel_input = data[2]
         mel_lengths = data[3]
         stop_targets = data[4]
+        speaker_ids = data[5]
         avg_text_length = torch.mean(text_lengths.float())
         avg_spec_length = torch.mean(mel_lengths.float())
 
@@ -81,13 +83,20 @@ def train(model, criterion, criterion_st, optimizer, optimizer_st, scheduler,
             mel_input = mel_input.cuda(non_blocking=True)
             mel_lengths = mel_lengths.cuda(non_blocking=True)
             stop_targets = stop_targets.cuda(non_blocking=True)
+            speaker_ids = speaker_ids.cuda(non_blocking=True)
 
         # forward pass model
         decoder_output, postnet_output, alignments, \
-        stop_tokens, token_scores = model(text_input, text_lengths,  mel_input)
+        stop_tokens, token_scores = model(text_input, text_lengths,
+                                          mel_input, speaker_ids)
 
         # loss computation
-        stop_loss = criterion_st(stop_tokens, stop_targets) if c.stopnet else torch.zeros(1)
+        if c.stopnet:
+            stop_loss = c.stop_loss_adjustment * \
+                        criterion_st(stop_tokens, stop_targets)
+        else:
+            stop_loss = torch.zeros(1)
+
         if c.loss_masking:
             decoder_loss = criterion(decoder_output, mel_input, mel_lengths)
             if c.model == "Tacotron":
@@ -165,7 +174,8 @@ def train(model, criterion, criterion_st, optimizer, optimizer_st, scheduler,
             if current_step % c.save_step == 0:
                 if c.checkpoint:
                     # save model
-                    save_checkpoint(model, optimizer, optimizer_st,
+                    stop_optimizer = optimizer_st if c.separate_stopnet else None
+                    save_checkpoint(model, optimizer, stop_optimizer,
                                     postnet_loss.item(), OUT_PATH, current_step,
                                     epoch)
 
@@ -174,12 +184,16 @@ def train(model, criterion, criterion_st, optimizer, optimizer_st, scheduler,
                 const_spec = postnet_output[0].data.cpu().numpy()
                 gt_spec = mel_input[0].data.cpu().numpy()
                 align_img = alignments[0].data.cpu().numpy()
+                loss_spec = np.abs(gt_spec - const_spec)
+                loss_spec_sqr = np.square(loss_spec)
 
                 figures = {
                     "prediction_decoder": plot_spectrogram(decoder_spec, ap),
                     "prediction": plot_spectrogram(const_spec, ap),
                     "ground_truth": plot_spectrogram(gt_spec, ap),
-                    "alignment": plot_alignment(align_img)
+                    "alignment": plot_alignment(align_img),
+                    "loss_spec": plot_like_spectrogram(loss_spec),
+                    "loss_spec_sqr": plot_like_spectrogram(loss_spec_sqr)
                 }
                 tb_logger.tb_train_figures(current_step, figures)
 
@@ -246,6 +260,7 @@ def evaluate(model, criterion, criterion_st, ap, current_step, epoch, c):
             mel_input = data[2]
             mel_lengths = data[3]
             stop_targets = data[4]
+            speaker_ids = data[5]
 
             # set stop targets view, we predict a single stop token per r frames prediction
             stop_targets = stop_targets.view(text_input.shape[0],
@@ -260,15 +275,21 @@ def evaluate(model, criterion, criterion_st, ap, current_step, epoch, c):
                 mel_lengths = mel_lengths.cuda()
                 # linear_input = linear_input.cuda() if c.model == "Tacotron" else None
                 stop_targets = stop_targets.cuda()
+                speaker_ids = speaker_ids.cuda()
 
             # forward pass
             decoder_output, postnet_output, alignments, \
             stop_tokens, token_scores = model.forward(text_input,
                                                       text_lengths,
-                                                      mel_input)
+                                                      mel_input,
+                                                      speaker_ids)
 
             # loss computation
-            stop_loss = criterion_st(stop_tokens, stop_targets) if c.stopnet else torch.zeros(1)
+            if c.stopnet:
+                stop_loss = c.stop_loss_adjustment * \
+                            criterion_st(stop_tokens, stop_targets)
+            else:
+                stop_loss = torch.zeros(1)
             if c.loss_masking:
                 decoder_loss = criterion(decoder_output, mel_input, mel_lengths)
                 if c.model == "Tacotron":
@@ -318,11 +339,16 @@ def evaluate(model, criterion, criterion_st, ap, current_step, epoch, c):
             gt_spec = mel_input[idx].data.cpu().numpy()
             align_img = alignments[idx].data.cpu().numpy()
 
+            loss_spec = np.abs(gt_spec - postnet_spec)
+            loss_spec_sqr = np.square(loss_spec)
+
             eval_figures = {
                 "decoder_spec": plot_spectrogram(decoder_spec, ap),
                 "post_net": plot_spectrogram(postnet_spec, ap),
                 "ground_truth": plot_spectrogram(gt_spec, ap),
-                "alignment": plot_alignment(align_img)
+                "alignment": plot_alignment(align_img),
+                "loss_spec": plot_like_spectrogram(loss_spec),
+                "loss_spec_sqr": plot_like_spectrogram(loss_spec_sqr)
             }
             tb_logger.tb_eval_figures(current_step, eval_figures)
 
@@ -351,11 +377,13 @@ def evaluate(model, criterion, criterion_st, ap, current_step, epoch, c):
 
 def test(model, ap, current_step, epoch, c):
     test_sentences = [
-        "It took me quite a long time to develop a voice, and now that I have "
-        "it I'm not going to be silent.",
-        "Be a voice, not an echo.",
-        "I'm sorry Dave. I'm afraid I can't do that.",
-        "This cake is great. It's so delicious and moist."
+        "Die Erfolge der Grünen bringen eine Reihe "
+        "Unerfahrener in die Parlamente.",
+        "Andrea Nahles will in der Fraktion die Vertrauensfrage stellen.",
+        "Die Luftfahrtbranche arbeite daran, CO2-neutral zu werden",
+        "Michael Kretschmer versucht seit Monaten, die Bürger zu umgarnen.",
+        "Nun ist der Spieltempel pleite, und manchen Dorfbewohnern "
+        "fehlt das Geld zum Essen."
     ]
 
     if args.rank == 0 and epoch > c.test_delay_epochs:
@@ -365,8 +393,11 @@ def test(model, ap, current_step, epoch, c):
         print(" | > Synthesizing test sentences")
         for idx, test_sentence in enumerate(test_sentences):
             try:
-                wav, alignment, decoder_output, postnet_output, stop_tokens = synthesis(
-                    model, test_sentence, c, use_cuda, ap)
+                token_scores = np.random.normal(0, 0.3, c.num_style_tokens)
+                speaker_id = np.random.randint(0, get_max_speaker_id(c) + 1, 1)[0]
+                wav, alignment, decoder_output, postnet_output, stop_tokens = \
+                    synthesis(model, test_sentence, c, use_cuda,
+                              ap, token_scores, speaker_id, "de")
                 file_path = os.path.join(AUDIO_PATH, str(current_step))
                 os.makedirs(file_path, exist_ok=True)
                 file_path = os.path.join(file_path,
@@ -467,6 +498,8 @@ def main(args, c):
                                 ap, current_step, epoch, c)
             print(" | > Validation Loss: {:.5f}".format(val_loss), flush=True)
             target_loss = val_loss
+
+            test(model, ap, current_step, epoch, c)
 
         best_loss = save_best_model(model, optimizer, target_loss, best_loss,
                                     OUT_PATH, current_step, epoch)

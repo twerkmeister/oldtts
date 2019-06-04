@@ -36,6 +36,43 @@ class Prenet(nn.Module):
         return inputs
 
 
+class EmbeddingCombiner(nn.Module):
+    """Combining the encoder, speaker and style embedding."""
+    def __init__(self, in_features, out_features=[256, 256],
+                 res_encoder=True, activation="tanh", dropout=0.1):
+        super(EmbeddingCombiner, self).__init__()
+        in_features = [in_features] + out_features[:-1]
+        self.layers = nn.ModuleList([
+            nn.Linear(in_size, out_size)
+            for (in_size, out_size) in zip(in_features, out_features)
+        ])
+        self.res_encoder = res_encoder
+        self.activation = getattr(torch, activation)
+        self.dropout = nn.Dropout(dropout)
+        # self.dropout = nn.Dropout(0.5)
+        # self.init_layers()
+
+    def init_layers(self):
+        for layer in self.layers:
+            torch.nn.init.xavier_uniform_(
+                layer.weight, gain=torch.nn.init.calculate_gain('relu'))
+
+    def forward(self, encoder_outputs, speaker_embeddings, style_encoding):
+        speaker_embeddings.unsqueeze_(1)
+        speaker_embeddings = speaker_embeddings.expand(encoder_outputs.size(0),
+                                                       encoder_outputs.size(1),
+                                                       -1)
+        style_encoding = style_encoding.expand(-1, encoder_outputs.size(1), -1)
+        inputs = torch.cat((encoder_outputs, speaker_embeddings,
+                           style_encoding), 2)
+        for linear in self.layers:
+            inputs = self.dropout(self.activation(linear(inputs)))
+
+        if self.res_encoder:
+            inputs = inputs + encoder_outputs
+        return inputs
+
+
 class BatchNormConv1d(nn.Module):
     r"""A wrapper for Conv1d with BatchNorm. It sets the activation
     function between Conv and BatchNorm layers. BatchNorm layer
@@ -386,7 +423,7 @@ class Decoder(nn.Module):
 
     def decode(self,
                inputs,
-               t, 
+               t,
                mask=None):
         # Prenet
         processed_memory = self.prenet(self.memory_input)

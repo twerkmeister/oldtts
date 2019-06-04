@@ -46,8 +46,8 @@ def mozilla(root_path, meta_file):
 
 def mailabs(root_path, meta_files):
     """Normalizes M-AI-Labs meta data files to TTS format"""
-    folders = [os.path.dirname(f.strip()) for f in meta_files.split(",")]
     meta_files = [f.strip() for f in meta_files.split(",")]
+    folders = [os.path.dirname(meta_file) for meta_file in meta_files]
     items = []
     for idx, meta_file in enumerate(meta_files):
         print(" | > {}".format(meta_file))
@@ -56,8 +56,7 @@ def mailabs(root_path, meta_files):
         with open(txt_file, 'r') as ttf:
             for line in ttf:
                 cols = line.split('|')
-                wav_file = os.path.join(root_path, folder, 'wavs',
-                                        cols[0] + '.wav')
+                wav_file = os.path.join(root_path, folder, 'wavs', cols[0])
                 if os.path.isfile(wav_file):
                     text = cols[1]
                     items.append([text, wav_file])

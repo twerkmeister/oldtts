@@ -4,9 +4,10 @@ from torch import nn
 from math import sqrt
 
 from layers.style_encoder import GlobalStyleTokens
-from layers.tacotron import Prenet, Encoder, Decoder, PostCBHG
+from layers.tacotron import Prenet, Encoder, Decoder, PostCBHG, \
+    EmbeddingCombiner
 from layers.tacotron2 import Postnet
-from utils.generic_utils import sequence_mask
+from utils.generic_utils import sequence_mask, get_max_speaker_id
 
 
 class Tacotron(nn.Module):
@@ -17,15 +18,26 @@ class Tacotron(nn.Module):
                  padding_idx=None):
         super(Tacotron, self).__init__()
         self.r = c.r
+        self.max_speaker_id = get_max_speaker_id(c)
         self.mel_dim = c.audio['num_mels']
         self.linear_dim = c.audio['num_freq']
         self.embedding = nn.Embedding(num_chars, 256, padding_idx=padding_idx)
         self.embedding.weight.data.normal_(0, 0.3)
+        self.speaker_embeddings = nn.Embedding(self.max_speaker_id + 1,
+                                               c.speaker_embedding_dim)
+        self.speaker_embeddings.weight.data.normal_(0, 0.3)
         self.encoder = Encoder(256)
-        self.decoder = Decoder(256 + c.style_token_dim, self.mel_dim, c.r,
+        self.embedding_combiner = EmbeddingCombiner(256
+                                                    + c.style_token_dim
+                                                    + c.speaker_embedding_dim,
+                                                    res_encoder=c.res_encoder,
+                                                    dropout=c.combiner_dropout,
+                                                    activation=c.combiner_activation)
+        self.decoder = Decoder(256, self.mel_dim, c.r,
                                c.memory_size, c.windowing, c.attention_norm)
-        self.postnet = Postnet(self.mel_dim, num_convs=5, num_feature_maps=256,
-                               dropout=0.1)
+        self.postnet = Postnet(self.mel_dim, num_convs=5,
+                               num_feature_maps=c.postnet_num_feature_maps,
+                               dropout=c.postnet_dropout)
         self.global_style_tokens = GlobalStyleTokens(self.mel_dim,
                                                      c.num_style_tokens,
                                                      c.style_token_dim,
@@ -43,20 +55,20 @@ class Tacotron(nn.Module):
         mel_outputs_postnet = mel_outputs_postnet.transpose(1, 2)
         return mel_outputs, mel_outputs_postnet, alignments
 
-    def forward(self, characters, text_lengths, mel_specs):
+    def forward(self, characters, text_lengths, mel_specs, speaker_ids):
         B = characters.size(0)
         mask = sequence_mask(text_lengths).to(characters.device)
         inputs = self.embedding(characters)
         encoder_outputs = self.encoder(inputs)
+        speaker_embeddings = self.speaker_embeddings(speaker_ids)
         style_encoding, token_scores = self.global_style_tokens(mel_specs)
-        style_encoding = style_encoding.expand(-1, encoder_outputs.size(1),
-                                               -1)
 
-        concatenated = torch.cat((encoder_outputs, style_encoding), 2)
+        combined = self.embedding_combiner(encoder_outputs, speaker_embeddings,
+                                           style_encoding)
 
         # encoder_outputs = encoder_outputs + style_encoding
         mel_outputs, alignments, stop_tokens = self.decoder(
-            concatenated, mel_specs, mask)
+            combined, mel_specs, mask)
         mel_outputs = mel_outputs.view(B, -1, self.mel_dim)
         mel_outputs = mel_outputs.transpose(1, 2)
         mel_outputs_postnet = self.postnet(mel_outputs)
@@ -65,18 +77,18 @@ class Tacotron(nn.Module):
         return mel_outputs, mel_outputs_postnet, alignments, \
                stop_tokens, token_scores
 
-    def inference(self, characters, token_scores):
+    def inference(self, characters, token_scores, speaker_ids):
         B = characters.size(0)
         inputs = self.embedding(characters)
         encoder_outputs = self.encoder(inputs)
         style_encoding = self.global_style_tokens.inference(token_scores)
-        style_encoding = style_encoding.expand(-1, encoder_outputs.size(1),
-                                               -1)
+        speaker_embeddings = self.speaker_embeddings(speaker_ids)
 
-        concatenated = torch.cat((encoder_outputs, style_encoding), 2)
+        combined = self.embedding_combiner(encoder_outputs, speaker_embeddings,
+                                           style_encoding)
 
         mel_outputs, alignments, stop_tokens = self.decoder.inference(
-            concatenated)
+            combined)
         mel_outputs = mel_outputs.view(B, -1, self.mel_dim)
 
         mel_outputs = mel_outputs.transpose(1, 2)
