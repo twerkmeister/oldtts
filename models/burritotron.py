@@ -3,31 +3,31 @@ import torch
 from torch import nn
 from math import sqrt
 
+from layers.burritotron import Encoder, EmbeddingCombiner
 from layers.style_encoder import GlobalStyleTokens
-from layers.tacotron import Prenet, Encoder, Decoder, PostCBHG, \
-    EmbeddingCombiner
+from layers.tacotron import Decoder
 from layers.tacotron2 import Postnet
 from utils.generic_utils import sequence_mask, get_max_speaker_id
 
 
-class Tacotron(nn.Module):
+class Burritotron(nn.Module):
 
     def __init__(self,
                  num_chars,
                  c,
                  padding_idx=None):
-        super(Tacotron, self).__init__()
+        super().__init__()
         self.r = c.r
         self.max_speaker_id = get_max_speaker_id(c)
         self.mel_dim = c.audio['num_mels']
         self.linear_dim = c.audio['num_freq']
-        self.embedding = nn.Embedding(num_chars, 256, padding_idx=padding_idx)
+        self.embedding = nn.Embedding(num_chars, 128, padding_idx=padding_idx)
         self.embedding.weight.data.normal_(0, 0.3)
         self.speaker_embeddings = nn.Embedding(self.max_speaker_id + 1,
                                                c.speaker_embedding_dim)
         self.speaker_embeddings.weight.data.normal_(0, 0.3)
-        self.encoder = Encoder(256)
-        self.embedding_combiner = EmbeddingCombiner(256
+        self.encoder = Encoder(128)
+        self.embedding_combiner = EmbeddingCombiner(128
                                                     + c.style_token_dim
                                                     + c.speaker_embedding_dim,
                                                     res_encoder=c.combiner_res_encoder,
@@ -64,7 +64,7 @@ class Tacotron(nn.Module):
         style_encoding, token_scores = self.global_style_tokens(mel_specs)
 
         combined = self.embedding_combiner(encoder_outputs, speaker_embeddings,
-                                           style_encoding)
+                                           style_encoding, text_lengths)
 
         # encoder_outputs = encoder_outputs + style_encoding
         mel_outputs, alignments, stop_tokens = self.decoder(
@@ -84,8 +84,9 @@ class Tacotron(nn.Module):
         style_encoding = self.global_style_tokens.inference(token_scores)
         speaker_embeddings = self.speaker_embeddings(speaker_ids)
 
-        combined = self.embedding_combiner(encoder_outputs, speaker_embeddings,
-                                           style_encoding)
+        combined = self.embedding_combiner.inference(encoder_outputs,
+                                                     speaker_embeddings,
+                                                     style_encoding)
 
         mel_outputs, alignments, stop_tokens = self.decoder.inference(
             combined)

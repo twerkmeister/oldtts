@@ -197,12 +197,16 @@ def train(model, criterion, criterion_st, optimizer, optimizer_st, scheduler,
                 }
                 tb_logger.tb_train_figures(current_step, figures)
 
+                sample_training_audios = data_loader.dataset.load_random_samples(2)
+                sample_training_audios = {name: audio for name, audio
+                                          in sample_training_audios}
                 # Sample audio
                 postnet_audio = ap.inv_mel_spectrogram(const_spec.T)
                 decoder_audio = ap.inv_mel_spectrogram(decoder_spec.T)
                 tb_logger.tb_train_audios(current_step,
                                           {'postnet_audio': postnet_audio,
-                                           'decoder_audio': decoder_audio},
+                                           'decoder_audio': decoder_audio,
+                                           **sample_training_audios},
                                           c.audio["sample_rate"])
 
     avg_postnet_loss /= (num_iter + 1)

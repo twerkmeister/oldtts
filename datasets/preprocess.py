@@ -65,6 +65,30 @@ def mailabs(root_path, meta_files):
     return items
 
 
+def mailabs2(root_path, meta_files):
+    """Normalizes M-AI-Labs meta data files to TTS format
+
+    uses metadata.csv and then the second column which has normalized text"""
+    meta_files = [f.strip() for f in meta_files.split(",")]
+    folders = [os.path.dirname(meta_file) for meta_file in meta_files]
+    items = []
+    for idx, meta_file in enumerate(meta_files):
+        print(" | > {}".format(meta_file))
+        folder = folders[idx]
+        txt_file = os.path.join(root_path, meta_file)
+        with open(txt_file, 'r') as ttf:
+            for line in ttf:
+                cols = line.split('|')
+                wav_file = os.path.join(root_path, folder, 'wavs', cols[0] + ".wav")
+                if os.path.isfile(wav_file):
+                    text = cols[2]
+                    items.append([text, wav_file])
+                else:
+                    continue
+    return items
+
+
+
 def ljspeech(root_path, meta_file):
     """Normalizes the Nancy meta data file to TTS format"""
     txt_file = os.path.join(root_path, meta_file)
@@ -73,7 +97,7 @@ def ljspeech(root_path, meta_file):
         for line in ttf:
             cols = line.split('|')
             wav_file = os.path.join(root_path, 'wavs', cols[0] + '.wav')
-            text = cols[1]
+            text = cols[2]
             items.append([text, wav_file])
     return items
 

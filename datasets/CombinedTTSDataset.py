@@ -86,3 +86,9 @@ class CombinedTTSDataset(Dataset):
     def __getitem__(self, idx):
         ds_idx, item_idx = self.index[idx]
         return self.datasets[ds_idx][item_idx]
+
+    def load_random_samples(self, num):
+        samples = []
+        for ds in self.datasets:
+            samples += ds.load_random_samples(num)
+        return samples

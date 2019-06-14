@@ -40,7 +40,7 @@ class EmbeddingCombiner(nn.Module):
     """Combining the encoder, speaker and style embedding."""
     def __init__(self, in_features, out_features=[256, 256],
                  res_encoder=True, activation="tanh", dropout=0.1):
-        super(EmbeddingCombiner, self).__init__()
+        super().__init__()
         in_features = [in_features] + out_features[:-1]
         self.layers = nn.ModuleList([
             nn.Linear(in_size, out_size)
@@ -295,7 +295,7 @@ class Encoder(nn.Module):
     r"""Encapsulate Prenet and CBHG modules for encoder"""
 
     def __init__(self, in_features):
-        super(Encoder, self).__init__()
+        super().__init__()
         self.prenet = Prenet(in_features, out_features=[256, 128])
         self.cbhg = EncoderCBHG()
 
@@ -340,7 +340,7 @@ class Decoder(nn.Module):
 
     def __init__(self, in_features, memory_dim, r, memory_size,
                  attn_windowing, attn_norm):
-        super(Decoder, self).__init__()
+        super().__init__()
         self.r = r
         self.in_features = in_features
         self.max_decoder_steps = 500
@@ -412,6 +412,8 @@ class Decoder(nn.Module):
         self.current_context_vec = inputs.data.new(B, self.in_features).zero_()
         # attention states
         self.attention = inputs.data.new(B, T).zero_()
+        self.attention_history = [inputs.data.new(B, T).zero_()] * 2
+        self.delta_attention = inputs.data.new(B, T).zero_()
         self.attention_cum = inputs.data.new(B, T).zero_()
 
     def _parse_outputs(self, outputs, attentions, stop_tokens):
@@ -428,8 +430,21 @@ class Decoder(nn.Module):
         # Prenet
         processed_memory = self.prenet(self.memory_input)
         # Attention RNN
+        attention_delta = self.attention - self.attention_history[-1]
+        attention_delta2 = self.attention - self.attention_history[-2]
+        attention_prev_delta = self.attention_history[-1] - self.attention_history[-2]
+        attention_delta_delta = attention_delta - attention_prev_delta
+        self.attention_history.append(self.attention.clone())
+        # attention_cat = torch.cat(
+        #     (self.attention.unsqueeze(1),
+        #      attention_delta.unsqueeze(1),
+        #      attention_delta2.unsqueeze(1),
+        #      attention_prev_delta.unsqueeze(1),
+        #      attention_delta_delta.unsqueeze(1),
+        #      self.attention_cum.unsqueeze(1)), dim=1)
         attention_cat = torch.cat(
-            (self.attention.unsqueeze(1), self.attention_cum.unsqueeze(1)), dim=1)
+            (self.attention.unsqueeze(1),
+             self.attention_cum.unsqueeze(1)), dim=1)
         self.attention_rnn_hidden, self.current_context_vec, self.attention = self.attention_rnn(
             processed_memory, self.current_context_vec, self.attention_rnn_hidden,
             inputs, attention_cat, mask, t)

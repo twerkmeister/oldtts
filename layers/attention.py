@@ -114,7 +114,7 @@ class AttentionRNNCell(nn.Module):
                 It is only active in eval mode.
             norm (str): norm method to compute alignment weights.
         """
-        super(AttentionRNNCell, self).__init__()
+        super().__init__()
         self.align_model = align_model
         self.rnn_cell = nn.GRUCell(annot_dim + memory_dim, rnn_dim)
         self.windowing = windowing

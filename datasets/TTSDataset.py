@@ -1,4 +1,6 @@
 import os
+import random
+
 import numpy as np
 from torch.utils.data import Dataset
 
@@ -100,6 +102,15 @@ class TTSDataset(Dataset):
 
         np.save(tmp_path, phonemes)
         return phonemes
+
+    def load_random_samples(self, num):
+        samples = []
+        for i in range(num):
+            idx = random.randint(0, len(self))
+            text, wav_file = self.items[idx]
+            wav = np.asarray(self.load_wav(wav_file), dtype=np.float32)
+            samples.append((wav_file, wav))
+        return samples
 
     def load_data(self, idx):
         text, wav_file = self.items[idx]
