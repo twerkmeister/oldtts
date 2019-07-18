@@ -4,7 +4,8 @@ import re
 import phonemizer
 from phonemizer.phonemize import phonemize
 from utils.text import cleaners
-from utils.text.symbols import symbols, phonemes, _phoneme_punctuations
+from utils.text.symbols import symbols, phonemes, _phoneme_punctuations, _bos, \
+    _eos
 
 # Mappings from symbol to numeric ID and vice versa:
 _symbol_to_id = {s: i for i, s in enumerate(symbols)}
@@ -43,6 +44,10 @@ def text2phone(text, language):
             for punct in punctuations:
                 ph = ph.replace('| |\n', '|'+punct+'| |', 1)
     return ph
+
+
+def pad_with_eos_bos(phoneme_sequence):
+    return [_phonemes_to_id[_bos]] + phoneme_sequence + [_phonemes_to_id[_eos]]
 
 
 def phoneme_to_sequence(text, cleaner_names, language, enable_eos_bos=False):

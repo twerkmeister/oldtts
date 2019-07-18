@@ -3,9 +3,8 @@ import torch
 from torch import nn
 from math import sqrt
 
-from layers.burritotron import Encoder, EmbeddingCombiner
+from layers.burritotron import Encoder, EmbeddingCombiner, Decoder
 from layers.style_encoder import GlobalStyleTokens
-from layers.tacotron import Decoder
 from layers.tacotron2 import Postnet
 from utils.generic_utils import sequence_mask, get_max_speaker_id
 
@@ -27,12 +26,8 @@ class Burritotron(nn.Module):
                                                c.speaker_embedding_dim)
         self.speaker_embeddings.weight.data.normal_(0, 0.3)
         self.encoder = Encoder(128)
-        self.embedding_combiner = EmbeddingCombiner(128
-                                                    + c.style_token_dim
-                                                    + c.speaker_embedding_dim,
-                                                    res_encoder=c.combiner_res_encoder,
-                                                    dropout=c.combiner_dropout,
-                                                    activation=c.combiner_activation)
+        self.embedding_combiner = EmbeddingCombiner(128,
+                                                    dropout=c.combiner_dropout)
         self.decoder = Decoder(256, self.mel_dim, c.r,
                                c.memory_size, c.windowing, c.attention_norm)
         self.postnet = Postnet(self.mel_dim, num_convs=5,

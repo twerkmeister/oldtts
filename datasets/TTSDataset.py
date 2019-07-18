@@ -4,7 +4,7 @@ import random
 import numpy as np
 from torch.utils.data import Dataset
 
-from utils.text import text_to_sequence, phoneme_to_sequence
+from utils.text import text_to_sequence, phoneme_to_sequence, pad_with_eos_bos
 
 
 class TTSDataset(Dataset):
@@ -83,7 +83,7 @@ class TTSDataset(Dataset):
     def generate_phoneme_sequence(self, text):
         phonemes = phoneme_to_sequence(text, [self.cleaners],
                                        language=self.phoneme_language,
-                                       enable_eos_bos=self.enable_eos_bos)
+                                       enable_eos_bos=False)
         phonemes = np.asarray(phonemes, dtype=np.int32)
         return phonemes
 
@@ -101,6 +101,10 @@ class TTSDataset(Dataset):
             phonemes = self.generate_phoneme_sequence(text)
 
         np.save(tmp_path, phonemes)
+
+        if self.enable_eos_bos:
+            phonemes = pad_with_eos_bos(phonemes)
+
         return phonemes
 
     def load_random_samples(self, num):

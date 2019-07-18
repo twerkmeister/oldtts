@@ -23,6 +23,7 @@ from utils.generic_utils import (NoamLR, check_update, count_parameters,
                                  set_init_dict, copy_config_file, setup_model,
                                  get_max_speaker_id)
 from utils.logger import Logger
+from utils.speakers import load_speaker_mapping
 from utils.synthesis import synthesis
 from utils.text.symbols import phonemes, symbols
 from utils.visual import plot_alignment, plot_spectrogram, plot_like_spectrogram
@@ -437,9 +438,15 @@ def main(args, c):
         optimizer_st = None
 
     if c.loss_masking:
-        criterion = L1LossMasked() if c.model == "Tacotron" else MSELossMasked()
+        if c.loss == "l1":
+            criterion = L1LossMasked()
+        else:
+            criterion = MSELossMasked()
     else:
-        criterion = nn.L1Loss() if c.model == "Tacotron" else nn.MSELoss()
+        if c.loss == "l1":
+            criterion = nn.L1Loss()
+        else:
+            criterion = nn.MSELoss()
     criterion_st = nn.BCEWithLogitsLoss() if c.stopnet else None
 
     if args.restore_path:

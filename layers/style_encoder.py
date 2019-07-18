@@ -57,6 +57,9 @@ class ReferenceEncoder(nn.Module):
 
         post_conv_height = self.calculate_post_conv_height(num_mel, 3,
                                                            2, 1, num_layers)
+        # self.recurrence = nn.LSTM(input_size=filters[-1] * post_conv_height,
+        #                           hidden_size=prosody_encoding_dim,
+        #                           batch_first=True)
         self.recurrence = nn.GRU(input_size=filters[-1] * post_conv_height,
                                  hidden_size=prosody_encoding_dim,
                                  batch_first=True)
@@ -78,6 +81,8 @@ class ReferenceEncoder(nn.Module):
         # x: 3D tensor [batch_size, post_conv_width,
         #               num_channels*post_conv_height]
 
+        self.recurrence.flatten_parameters()
+        # memory, (out, _) = self.recurrence(x)
         memory, out = self.recurrence(x)
         # out: 3D tensor [seq_len==1, batch_size, encoding_size=128]
 
