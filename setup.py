@@ -5,7 +5,7 @@ __version__ = None
 with open("version.py") as f:
     exec(f.read())
 
-setup_requires = ["numpy==1.15.4"],
+setup_requires = ["numpy==1.22.0"],
 
 install_requires = [
     "scipy >=0.19.0",
